@@ -12,7 +12,7 @@ ctk.set_default_color_theme("blue")
 class Pdf2EpubGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("pdf2epubx — PDF → EPUB (для Xteink X3)")
+        self.title("pdf2epubx — конвертер из PDF в EPUB с различными профилями")
         self.geometry("980x980")
         self.resizable(True, True)
 
