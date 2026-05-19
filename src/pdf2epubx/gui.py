@@ -13,8 +13,8 @@ class Pdf2EpubGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("pdf2epubx — PDF → EPUB (для Xteink X3)")
-        self.geometry("980x720")
-        self.resizable(False, False)
+        self.geometry("980x980")
+        self.resizable(True, True)
 
         ctk.CTkLabel(self, text="pdf2epubx Converter", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=20)
 
@@ -28,7 +28,7 @@ class Pdf2EpubGUI(ctk.CTk):
         # Профиль
         ctk.CTkLabel(self, text="Профиль:").pack(anchor="w", padx=40, pady=(20, 5))
         self.profile_var = ctk.StringVar(value="technical")
-        ctk.CTkOptionMenu(self, values=["novel", "technical", "hybrid", "facsimile"],
+        ctk.CTkOptionMenu(self, values=["novel", "technical", "programming", "hybrid", "facsimile"],
                           variable=self.profile_var).pack(pady=5, padx=40)
 
         # Настройки колонтитулов
@@ -44,12 +44,9 @@ class Pdf2EpubGUI(ctk.CTk):
 
         # === НОВЫЕ ОПЦИИ ===
         self.preserve_images_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(self, text="Сохранять изображения (схемы, диаграммы)",
-                        variable=self.preserve_images_var).pack(anchor="w", padx=40, pady=(20, 5))
-
+        ctk.CTkCheckBox(self, text="Сохранять изображения (схемы, диаграммы)", variable=self.preserve_images_var).pack(anchor="w", padx=40, pady=(20, 5))
         self.skip_toc_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self, text="Пропускать печатное оглавление (первые страницы)",
-                        variable=self.skip_toc_var).pack(anchor="w", padx=40, pady=5)
+        ctk.CTkCheckBox(self, text="Пропускать печатное оглавление (первые страницы)", variable=self.skip_toc_var).pack(anchor="w", padx=40, pady=5)
 
         # Кнопка
         self.convert_btn = ctk.CTkButton(
@@ -72,7 +69,7 @@ class Pdf2EpubGUI(ctk.CTk):
             return
 
         self.convert_btn.configure(state="disabled")
-        self.log.insert("end", "🚀 Запуск конвертации...\n")
+        self.log.insert("end", "Запуск конвертации...\n")
         self.log.see("end")
 
         threading.Thread(target=self.run_conversion, daemon=True).start()
@@ -82,10 +79,10 @@ class Pdf2EpubGUI(ctk.CTk):
         output_path = input_path.with_suffix(".epub")
 
         try:
-            self.log.insert("end", f"📄 Файл: {input_path.name}\n")
-            self.log.insert("end", f"📌 Профиль: {self.profile_var.get()}\n")
-            self.log.insert("end", f"🖼️ Изображения: {'включены' if self.preserve_images_var.get() else 'ПРОПУЩЕНЫ'}\n")
-            self.log.insert("end", f"📖 Оглавление: {'пропущено' if self.skip_toc_var.get() else 'включено'}\n")
+            self.log.insert("end", f"Файл: {input_path.name}\n")
+            self.log.insert("end", f"Профиль: {self.profile_var.get()}\n")
+            self.log.insert("end", f"Изображения: {'включены' if self.preserve_images_var.get() else 'ПРОПУЩЕНЫ'}\n")
+            self.log.insert("end", f"Оглавление: {'пропущено' if self.skip_toc_var.get() else 'включено'}\n")
             self.log.see("end")
 
             result_path = convert_pdf_to_epub(
@@ -105,11 +102,11 @@ class Pdf2EpubGUI(ctk.CTk):
                 split_by_outline=True,
             )
 
-            self.log.insert("end", "✅ Конвертация завершена успешно!\n")
-            self.log.insert("end", f"📚 EPUB: {result_path.name}\n\n")
+            self.log.insert("end", "Конвертация завершена успешно!\n")
+            self.log.insert("end", f"EPUB: {result_path.name}\n\n")
 
         except Exception as e:
-            self.log.insert("end", f"❌ Ошибка:\n{str(e)}\n\n")
+            self.log.insert("end", f"Ошибка:\n{str(e)}\n\n")
         finally:
             self.convert_btn.configure(state="normal")
             self.log.see("end")

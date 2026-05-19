@@ -17,10 +17,19 @@ class HtmlRenderer:
         profile: ConversionProfile,
         writer: EpubWriter,
         edit_rules: EditRules,
+        # === НОВЫЕ ПАРАМЕТРЫ ИЗ GUI ===
+        header_height: float = 50.0,
+        footer_height: float = 45.0,
+        preserve_images: bool = True,
+        skip_printed_toc: bool = False,
     ) -> None:
         self.profile = profile
         self.writer = writer
         self.edit_rules = edit_rules
+        self.header_height = header_height
+        self.footer_height = footer_height
+        self.preserve_images = preserve_images
+        self.skip_printed_toc = skip_printed_toc
 
     def render_pdf_page_as_facsimile(
         self,
@@ -89,6 +98,10 @@ class HtmlRenderer:
         raw = classified.raw
 
         if kind in {"header", "footer", "unknown"}:
+            return ""
+
+        # === НОВЫЙ ФИКС: пропускаем подписи к рисункам, если изображения отключены ===
+        if kind == "caption" and not self.preserve_images:
             return ""
 
         if kind == "image":
@@ -179,7 +192,7 @@ class HtmlRenderer:
         return f'<p class="caption">{html_escape(text)}</p>'
 
     def render_image_block(self, page: PageContent, block: RawBlock) -> str:
-        if not self.profile.preserve_images:
+        if not self.preserve_images or not self.profile.preserve_images:
             return ""
 
         if not block.image_bytes:
@@ -232,7 +245,7 @@ class HtmlRenderer:
             return ""
 
         text = " ".join(lines)
-        text = clean_text_post_processing(text)      # ← НОВАЯ ОЧИСТКА
+        text = clean_text_post_processing(text)
         return normalize_line(text)
 
     def block_lines(self, block: RawBlock) -> list[str]:
@@ -241,7 +254,7 @@ class HtmlRenderer:
         for line in block.lines:
             text = normalize_line("".join(span.text for span in line.spans))
             if text:
-                text = clean_text_post_processing(text)   # ← НОВАЯ ОЧИСТКА
+                text = clean_text_post_processing(text)
                 result.append(text)
 
         return result
@@ -250,7 +263,7 @@ class HtmlRenderer:
         result: list[str] = []
 
         for line in block.lines:
-            text = "".join(span.text for span in line.spans).rstrip()
+            text = normalize_line("".join(span.text for span in line.spans))
             if text:
                 result.append(text)
 

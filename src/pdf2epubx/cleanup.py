@@ -11,7 +11,7 @@ from pdf2epubx.utils import normalize_for_repetition, normalize_spaces
 # ====================== УЛУЧШЕННАЯ ОЧИСТКА ======================
 
 def clean_garbage_symbols(text: str) -> str:
-    """Исправляем все PDF-артефакты буллетов и спецсимволов."""
+    """Исправляем PDF-артефакты буллетов и спецсимволов."""
     replacements = {
         r'z\s*z': '•',
         r'zz': '•',
@@ -21,8 +21,8 @@ def clean_garbage_symbols(text: str) -> str:
         r'z↓': '↓',
         r'z\.': '•',
         r'\s+·\s+': ' • ',
-        r'■': '•',      # закрашенный квадрат
-        r'□': '•',      # пустой квадрат — САМАЯ ЧАСТАЯ ПРОБЛЕМА
+        r'■': '•',
+        r'□': '•',
         r'▪': '•',
         r'▫': '•',
         r'●': '•',
@@ -43,43 +43,82 @@ def clean_page_numbers(text: str) -> str:
 
 
 def clean_toc_leaders(text: str) -> str:
-    """Максимально агрессивная очистка точек-лидеров (включая наслаивающиеся)."""
-    # 1. Классика: 6+ точек + число в конце строки
+    """Максимально агрессивная очистка точек-лидеров."""
     text = re.sub(r'\s*\.{6,}\s*\d+\s*$', '', text, flags=re.MULTILINE)
-    # 2. Любое количество точек между текстом и числом
     text = re.sub(r'\s*\.{4,}\s*', ' — ', text)
-    # 3. Несколько строк подряд с точками (наслаивание)
     text = re.sub(r'(\.{3,}\s*)+', ' — ', text)
-    # 4. Точки в начале строки
     text = re.sub(r'^\s*\.{4,}', '', text, flags=re.MULTILINE)
     return text
 
 
 def clean_side_chapter_numbers(text: str) -> str:
-    """Удаляем висячие номера глав справа (одиночные цифры 1–3 символа)."""
+    """Удаляем висячие номера глав справа."""
     lines = text.split('\n')
     clean_lines = []
     for line in lines:
         stripped = line.strip()
-        # Если вся строка — это просто число длиной 1–3 символа → пропускаем
         if re.fullmatch(r'\d{1,3}', stripped):
             continue
         clean_lines.append(line)
     return '\n'.join(clean_lines)
 
 
+def clean_chart_artifacts(text: str) -> str:
+    """СИЛЬНО УСИЛЕННАЯ очистка остатков графиков и диаграмм."""
+    lines = text.split('\n')
+    clean_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            clean_lines.append(line)
+            continue
+
+        lower = stripped.lower()
+
+        # 1. Очень короткие строки (типичные легенды: "а", "б", "ЕВ", "PB")
+        if len(stripped) <= 12 and len(stripped.split()) <= 3:
+            continue
+
+        # 2. Строки с высокой плотностью цифр или единиц измерения
+        if (
+            re.search(r'\b\d{4}\b', stripped) or                                 # годы
+            re.search(r'\b\d+\s*(ев|eb|pb|млрд|млн|тыс|г\.|р\.|рис\.?)\b', lower) or
+            re.fullmatch(r'[\d\s\.,—–%]+', stripped) or                        # только цифры
+            len(re.findall(r'\d', stripped)) > len(stripped) * 0.35             # >35% цифр
+        ):
+            continue
+
+        # 3. Типичные подписи к диаграммам (короткие заголовки)
+        if any(word in lower for word in [
+            "количество", "объем", "трафика", "пользователей", "интернета",
+            "mainframe", "устройство", "пакет", "оператор", "польз.", "ввода"
+        ]):
+            if len(stripped.split()) <= 6:  # короткие заголовки осей
+                continue
+
+        # 4. Единичные буквы/короткие обозначения
+        if re.fullmatch(r'[а-яa-z]\.?', stripped.lower()):
+            continue
+
+        clean_lines.append(line)
+
+    return '\n'.join(clean_lines)
+
+
 def clean_text_post_processing(text: str) -> str:
-    """Главная функция — вызывать после извлечения текста."""
+    """Главная функция пост-обработки."""
     text = clean_garbage_symbols(text)
     text = clean_page_numbers(text)
     text = clean_toc_leaders(text)
-    text = clean_side_chapter_numbers(text)      # ← новое
+    text = clean_side_chapter_numbers(text)
+    text = clean_chart_artifacts(text)          # ← усиленная очистка
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
 
 
-# ====================== СТАРЫЕ ФУНКЦИИ (оставляем как есть) ======================
+# ====================== СТАРЫЕ ФУНКЦИИ (оставляем без изменений) ======================
 
 def detect_repeated_marginal_texts(
     doc: fitz.Document,

@@ -93,6 +93,23 @@ PROFILES: dict[str, ConversionProfile] = {
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
     ),
+    # === НОВЫЙ ПРОФИЛЬ ДЛЯ КНИГ ПО ПРОГРАММИРОВАНИЮ ===
+    "programming": ConversionProfile(
+        name="programming",
+        description="Books about programming, Python, AI, Telegram bots, code examples (best paragraph joining).",
+        force_facsimile=False,
+        preserve_images=False,
+        preserve_code_blocks=True,
+        detect_tables=True,
+        table_mode="hybrid",
+        join_paragraph_lines=True,
+        aggressive_paragraph_joining=True,      # ← главное отличие
+        remove_headers_footers=True,
+        detect_headings=True,
+        split_by_outline=True,
+        fallback_render_empty_pages=True,
+        fallback_render_low_confidence_pages=True,
+    ),
 }
 
 

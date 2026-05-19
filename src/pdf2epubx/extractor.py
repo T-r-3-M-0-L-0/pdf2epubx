@@ -11,9 +11,11 @@ class PdfExtractor:
         self,
         doc: fitz.Document,
         edit_rules: EditRules,
+        preserve_images: bool = True,          # ← НОВЫЙ ПАРАМЕТР
     ) -> None:
         self.doc = doc
         self.edit_rules = edit_rules
+        self.preserve_images = preserve_images   # ← сохраняем
 
     def extract_page(self, page_index: int) -> PageContent:
         page = self.doc[page_index]
@@ -39,7 +41,7 @@ class PdfExtractor:
             if should_exclude_rect(page_number, bbox, self.edit_rules):
                 continue
 
-            if block_type == 0:
+            if block_type == 0:  # текст
                 lines = self._extract_lines(block)
                 if lines:
                     blocks.append(
@@ -50,19 +52,21 @@ class PdfExtractor:
                         )
                     )
 
-            elif block_type == 1:
-                image_bytes = block.get("image")
-                image_ext = str(block.get("ext", "png")).lower().strip(".") or "png"
+            elif block_type == 1:  # изображение
+                # ← Вот здесь теперь учитываем настройку
+                if self.preserve_images:
+                    image_bytes = block.get("image")
+                    image_ext = str(block.get("ext", "png")).lower().strip(".") or "png"
 
-                if isinstance(image_bytes, bytes) and image_bytes:
-                    blocks.append(
-                        RawBlock(
-                            kind="image",
-                            bbox=bbox,
-                            image_bytes=image_bytes,
-                            image_ext=image_ext,
+                    if isinstance(image_bytes, bytes) and image_bytes:
+                        blocks.append(
+                            RawBlock(
+                                kind="image",
+                                bbox=bbox,
+                                image_bytes=image_bytes,
+                                image_ext=image_ext,
+                            )
                         )
-                    )
 
         return PageContent(
             page_number=page_number,
