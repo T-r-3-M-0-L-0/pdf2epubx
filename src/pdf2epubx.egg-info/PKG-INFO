@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: pdf2epubx
-Version: 0.2.0
-Summary: Local PDF to EPUB converter with profiles for novels, technical books, facsimile and hybrid conversion
-Requires-Python: >=3.10
-Requires-Dist: PyMuPDF>=1.24.0
-Requires-Dist: EbookLib>=0.18
-Requires-Dist: typer>=0.12.0

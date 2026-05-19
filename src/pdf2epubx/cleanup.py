@@ -1,11 +1,43 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 
-import fitz
+import fitz  # PyMuPDF
 
 from pdf2epubx.utils import normalize_for_repetition, normalize_spaces
 
+
+# ====================== НОВЫЕ ФУНКЦИИ ОЧИСТКИ ======================
+
+def clean_page_numbers(text: str) -> str:
+    #Удаляем все варианты номеров страниц
+    text = re.sub(r'\bPage\s+\d+\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bстр\.?\s*\d+\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)      # число в конце строки
+    text = re.sub(r'\s+\d+\s*\n', '\n', text)
+    return text.strip()
+
+
+def clean_toc_leaders(text: str) -> str:
+    #Убираем точки-лидеры в оглавлении: «Название ................ 407»
+    # Длинная цепочка точек + число в конце строки
+    text = re.sub(r'\s*\.{5,}\s*\d+\s*$', '', text, flags=re.MULTILINE)
+    # Заменяем оставшиеся точки на тире (выглядит красиво в EPUB)
+    text = re.sub(r'\s*\.{4,}\s*', ' — ', text)
+    return text
+
+
+def clean_text_post_processing(text: str) -> str:
+    """Главная функция пост-обработки (вызывать после извлечения текста)."""
+    text = clean_page_numbers(text)
+    text = clean_toc_leaders(text)
+    text = re.sub(r'\n{3,}', '\n\n', text)      # убираем лишние пустые строки
+    text = re.sub(r'[ \t]+', ' ', text)         # лишние пробелы
+    return text.strip()
+
+
+# ====================== СТАРЫЕ ФУНКЦИИ (оставляем без изменений) ======================
 
 def detect_repeated_marginal_texts(
     doc: fitz.Document,
@@ -14,7 +46,7 @@ def detect_repeated_marginal_texts(
     top_ratio: float = 0.12,
     bottom_ratio: float = 0.12,
 ) -> set[str]:
-    """Улучшенное обнаружение повторяющихся колонтитулов (уже было, но чуть доработал)."""
+    """Улучшенное обнаружение повторяющихся колонтитулов."""
     counter: Counter[str] = Counter()
 
     page_count = min(len(doc), max_pages)
@@ -47,7 +79,7 @@ def detect_repeated_marginal_texts(
             text = extract_text_from_block_dict(block)
             normalized = normalize_for_repetition(text)
 
-            if len(normalized) >= 3:  # отбрасываем слишком короткие
+            if len(normalized) >= 3:
                 counter[normalized] += 1
 
     return {
@@ -58,7 +90,7 @@ def detect_repeated_marginal_texts(
 
 
 def extract_text_from_block_dict(block: dict) -> str:
-    """Вспомогательная функция (была в старом файле)."""
+    """Вспомогательная функция."""
     parts: list[str] = []
 
     for line in block.get("lines", []):
@@ -74,13 +106,12 @@ def extract_text_from_block_dict(block: dict) -> str:
     return normalize_spaces(" ".join(parts))
 
 
-# НОВАЯ ФУНКЦИЯ — можно вызывать дополнительно для жёсткой очистки
 def remove_headers_footers_by_height(
     page: fitz.Page,
     header_height: float = 50.0,
     footer_height: float = 45.0,
 ) -> str:
-    """Жёсткая очистка по высоте (fallback, если detect не сработал)."""
+    """Жёсткая очистка по высоте (fallback)."""
     rect = page.rect
     clip = fitz.Rect(0, header_height, rect.width, rect.height - footer_height)
     text = page.get_text("text", clip=clip, sort=True)

@@ -1,2 +1,0 @@
-[console_scripts]
-pdf2epubx = pdf2epubx.cli:app

@@ -1,0 +1,4 @@
+build/
+src/pdf2epubx/__pycache__/
+src/pdf2epubx.egg-info/
+dist/

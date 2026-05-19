@@ -8,6 +8,7 @@ from pdf2epubx.profiles import ConversionProfile
 from pdf2epubx.utils import html_escape, normalize_line, repair_hyphenation, safe_filename_fragment
 from pdf2epubx.code_repair import repair_code_text
 from pdf2epubx.edit_rules import EditRules
+from pdf2epubx.cleanup import clean_text_post_processing
 
 
 class HtmlRenderer:
@@ -60,7 +61,7 @@ class HtmlRenderer:
 
         parts: list[str] = [
             f'<section class="pdf-page" id="page-{page.page_number}">',
-            f'<div class="page-marker">Page {page.page_number}</div>',
+            #f'<div class="page-marker">Page {page.page_number}</div>',
         ]
 
         visible_count = 0
@@ -227,11 +228,11 @@ class HtmlRenderer:
 
     def block_text_joined(self, block: RawBlock) -> str:
         lines = self.block_lines(block)
-
         if not lines:
             return ""
 
         text = " ".join(lines)
+        text = clean_text_post_processing(text)      # ← НОВАЯ ОЧИСТКА
         return normalize_line(text)
 
     def block_lines(self, block: RawBlock) -> list[str]:
@@ -240,6 +241,7 @@ class HtmlRenderer:
         for line in block.lines:
             text = normalize_line("".join(span.text for span in line.spans))
             if text:
+                text = clean_text_post_processing(text)   # ← НОВАЯ ОЧИСТКА
                 result.append(text)
 
         return result
