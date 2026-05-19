@@ -8,36 +8,78 @@ import fitz  # PyMuPDF
 from pdf2epubx.utils import normalize_for_repetition, normalize_spaces
 
 
-# ====================== НОВЫЕ ФУНКЦИИ ОЧИСТКИ ======================
+# ====================== УЛУЧШЕННАЯ ОЧИСТКА ======================
+
+def clean_garbage_symbols(text: str) -> str:
+    """Исправляем все PDF-артефакты буллетов и спецсимволов."""
+    replacements = {
+        r'z\s*z': '•',
+        r'zz': '•',
+        r'z→': '→',
+        r'z←': '←',
+        r'z↑': '↑',
+        r'z↓': '↓',
+        r'z\.': '•',
+        r'\s+·\s+': ' • ',
+        r'■': '•',      # закрашенный квадрат
+        r'□': '•',      # пустой квадрат — САМАЯ ЧАСТАЯ ПРОБЛЕМА
+        r'▪': '•',
+        r'▫': '•',
+        r'●': '•',
+        r'○': '•',
+    }
+    for pattern, repl in replacements.items():
+        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+    return text
+
 
 def clean_page_numbers(text: str) -> str:
-    #Удаляем все варианты номеров страниц
+    """Удаляем номера страниц."""
     text = re.sub(r'\bPage\s+\d+\b', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\bстр\.?\s*\d+\b', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)      # число в конце строки
+    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)
     text = re.sub(r'\s+\d+\s*\n', '\n', text)
     return text.strip()
 
 
 def clean_toc_leaders(text: str) -> str:
-    #Убираем точки-лидеры в оглавлении: «Название ................ 407»
-    # Длинная цепочка точек + число в конце строки
-    text = re.sub(r'\s*\.{5,}\s*\d+\s*$', '', text, flags=re.MULTILINE)
-    # Заменяем оставшиеся точки на тире (выглядит красиво в EPUB)
+    """Максимально агрессивная очистка точек-лидеров (включая наслаивающиеся)."""
+    # 1. Классика: 6+ точек + число в конце строки
+    text = re.sub(r'\s*\.{6,}\s*\d+\s*$', '', text, flags=re.MULTILINE)
+    # 2. Любое количество точек между текстом и числом
     text = re.sub(r'\s*\.{4,}\s*', ' — ', text)
+    # 3. Несколько строк подряд с точками (наслаивание)
+    text = re.sub(r'(\.{3,}\s*)+', ' — ', text)
+    # 4. Точки в начале строки
+    text = re.sub(r'^\s*\.{4,}', '', text, flags=re.MULTILINE)
     return text
 
 
+def clean_side_chapter_numbers(text: str) -> str:
+    """Удаляем висячие номера глав справа (одиночные цифры 1–3 символа)."""
+    lines = text.split('\n')
+    clean_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Если вся строка — это просто число длиной 1–3 символа → пропускаем
+        if re.fullmatch(r'\d{1,3}', stripped):
+            continue
+        clean_lines.append(line)
+    return '\n'.join(clean_lines)
+
+
 def clean_text_post_processing(text: str) -> str:
-    """Главная функция пост-обработки (вызывать после извлечения текста)."""
+    """Главная функция — вызывать после извлечения текста."""
+    text = clean_garbage_symbols(text)
     text = clean_page_numbers(text)
     text = clean_toc_leaders(text)
-    text = re.sub(r'\n{3,}', '\n\n', text)      # убираем лишние пустые строки
-    text = re.sub(r'[ \t]+', ' ', text)         # лишние пробелы
+    text = clean_side_chapter_numbers(text)      # ← новое
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
 
 
-# ====================== СТАРЫЕ ФУНКЦИИ (оставляем без изменений) ======================
+# ====================== СТАРЫЕ ФУНКЦИИ (оставляем как есть) ======================
 
 def detect_repeated_marginal_texts(
     doc: fitz.Document,
@@ -46,9 +88,7 @@ def detect_repeated_marginal_texts(
     top_ratio: float = 0.12,
     bottom_ratio: float = 0.12,
 ) -> set[str]:
-    """Улучшенное обнаружение повторяющихся колонтитулов."""
     counter: Counter[str] = Counter()
-
     page_count = min(len(doc), max_pages)
 
     for page_index in range(page_count):
@@ -60,39 +100,26 @@ def detect_repeated_marginal_texts(
         data = page.get_text("dict", sort=True)
 
         for block in data.get("blocks", []):
-            if block.get("type") != 0:  # только текст
+            if block.get("type") != 0:
                 continue
-
             bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
 
-            y0 = float(bbox[1])
-            y1 = float(bbox[3])
-
-            is_top = y1 <= top_limit
-            is_bottom = y0 >= bottom_limit
-
-            if not is_top and not is_bottom:
+            y0, y1 = float(bbox[1]), float(bbox[3])
+            if not (y1 <= top_limit or y0 >= bottom_limit):
                 continue
 
             text = extract_text_from_block_dict(block)
             normalized = normalize_for_repetition(text)
-
             if len(normalized) >= 3:
                 counter[normalized] += 1
 
-    return {
-        text
-        for text, count in counter.items()
-        if count >= min_repeats
-    }
+    return {text for text, count in counter.items() if count >= min_repeats}
 
 
 def extract_text_from_block_dict(block: dict) -> str:
-    """Вспомогательная функция."""
     parts: list[str] = []
-
     for line in block.get("lines", []):
         line_parts: list[str] = []
         for span in line.get("spans", []):
@@ -102,7 +129,6 @@ def extract_text_from_block_dict(block: dict) -> str:
         line_text = normalize_spaces("".join(line_parts))
         if line_text:
             parts.append(line_text)
-
     return normalize_spaces(" ".join(parts))
 
 
@@ -111,8 +137,6 @@ def remove_headers_footers_by_height(
     header_height: float = 50.0,
     footer_height: float = 45.0,
 ) -> str:
-    """Жёсткая очистка по высоте (fallback)."""
     rect = page.rect
     clip = fitz.Rect(0, header_height, rect.width, rect.height - footer_height)
-    text = page.get_text("text", clip=clip, sort=True)
-    return text
+    return page.get_text("text", clip=clip, sort=True)
