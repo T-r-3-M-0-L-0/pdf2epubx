@@ -1,0 +1,17 @@
+[project]
+name = "pdf2epubx"
+version = "0.2.0"
+description = "Local PDF to EPUB converter with profiles for novels, technical books, facsimile and hybrid conversion"
+requires-python = ">=3.10"
+dependencies = [
+    "PyMuPDF>=1.24.0",
+    "EbookLib>=0.18",
+    "typer>=0.12.0"
+]
+
+[project.scripts]
+pdf2epubx = "pdf2epubx.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

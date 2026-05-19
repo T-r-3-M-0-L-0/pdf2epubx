@@ -1,0 +1,34 @@
+{
+  "crop": {
+    "top": 42,
+    "bottom": 36,
+    "left": 0,
+    "right": 0
+  },
+  "toc": {
+    "mode": "semantic",
+    "pages": "4-9",
+    "drop_original_dot_leaders": true
+  },
+  "headers_footers": {
+    "remove_repeated": true,
+    "remove_page_numbers": true,
+    "top_ratio": 0.10,
+    "bottom_ratio": 0.10
+  },
+  "code": {
+    "repair_git_spacing": true,
+    "detect_commit_blocks": true,
+    "detect_diff_blocks": true
+  },
+  "exclude_regions": [
+    {
+      "pages": "10-162",
+      "rect": [0, 0, 573.7, 62]
+    },
+    {
+      "pages": "10-162",
+      "rect": [0, 805, 573.7, 841.9]
+    }
+  ]
+}
