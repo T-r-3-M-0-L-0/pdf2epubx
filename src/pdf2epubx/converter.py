@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
-from pathlib import Path
-
 import fitz
-
+from pathlib import Path
 from pdf2epubx.chaptering import build_chapter_plan
 from pdf2epubx.classifier import BlockClassifier
 from pdf2epubx.cleanup import detect_repeated_marginal_texts
@@ -19,20 +17,28 @@ from pdf2epubx.renderer import HtmlRenderer
 from pdf2epubx.toc_parser import parse_toc_page, render_toc_entries
 from pdf2epubx.utils import clean_metadata_value, html_escape, safe_filename_fragment
 
-
 def convert_pdf_to_epub(
     input_pdf: Path,
     output_epub: Path,
     profile_name: str,
-    title: str | None,
-    author: str | None,
-    language: str,
-    ocr_mode: str,
-    ocr_language: str,
-    pages_per_chapter: int,
+    title: str | None = None,
+    author: str | None = None,
+    language: str = "ru",
+    ocr_mode: str = "auto",
+    ocr_language: str = "rus+eng",
+    pages_per_chapter: int = 10,
     rules_path: Path | None = None,
     split_by_outline: bool | None = None,
+    # === НОВЫЕ ПАРАМЕТРЫ ИЗ GUI ===
+    header_height: float = 50.0,
+    footer_height: float = 45.0,
+    preserve_images: bool = True,
+    skip_printed_toc: bool = False,
 ) -> Path:
+    """
+    Основная функция конвертации PDF → EPUB.
+    Все новые параметры из GUI добавлены с дефолтными значениями.
+    """
     input_pdf = input_pdf.resolve()
     output_epub = output_epub.resolve()
 
@@ -50,17 +56,14 @@ def convert_pdf_to_epub(
         pdf_stats = inspect_pdf(input_pdf)
         working_pdf = input_pdf
 
+        # OCR
         should_ocr = False
-
         if ocr_mode == "always":
             should_ocr = True
         elif ocr_mode == "auto" and pdf_stats.looks_scanned:
             should_ocr = True
         elif ocr_mode == "never":
             should_ocr = False
-        else:
-            if ocr_mode not in {"auto", "always", "never"}:
-                raise ValueError("ocr_mode must be one of: auto, always, never")
 
         if should_ocr:
             working_pdf = run_ocrmypdf(
@@ -96,9 +99,11 @@ def convert_pdf_to_epub(
                 identifier=identifier,
             )
 
+            # Передаём новые параметры в extractor и renderer
             extractor = PdfExtractor(
                 doc=doc,
                 edit_rules=edit_rules,
+                preserve_images=preserve_images,      # ← новая передача
             )
 
             repeated_marginals = (
@@ -119,6 +124,10 @@ def convert_pdf_to_epub(
                 profile=profile,
                 writer=writer,
                 edit_rules=edit_rules,
+                header_height=header_height,          # ← новая передача
+                footer_height=footer_height,          # ← новая передача
+                preserve_images=preserve_images,      # ← новая передача
+                skip_printed_toc=skip_printed_toc,    # ← новая передача
             )
 
             effective_split_by_outline = (
@@ -136,15 +145,6 @@ def convert_pdf_to_epub(
             if not chapter_plan:
                 raise RuntimeError("Chapter plan is empty. No EPUB chapters can be generated.")
 
-            print("DEBUG chapter_plan:")
-            for plan in chapter_plan[:10]:
-                print(f"  {plan.title}: {plan.start_page_index + 1}-{plan.end_page_index}")
-
-            if len(chapter_plan) > 10:
-                print("  ...")
-                for plan in chapter_plan[-5:]:
-                    print(f"  {plan.title}: {plan.start_page_index + 1}-{plan.end_page_index}")
-
             for chapter_index, chapter in enumerate(chapter_plan, start=1):
                 chapter_body_parts: list[str] = [
                     f"<h1>{html_escape(chapter.title)}</h1>"
@@ -154,16 +154,16 @@ def convert_pdf_to_epub(
                     pdf_page = doc[page_index]
                     page_number = page_index + 1
 
+                    # Пропуск печатного оглавления
+                    if skip_printed_toc and is_toc_page(page_number, edit_rules):
+                        continue
+
                     if is_toc_page(page_number, edit_rules) and edit_rules.toc.mode == "semantic":
                         toc_entries = parse_toc_page(pdf_page)
                         toc_html = render_toc_entries(toc_entries)
-
                         if toc_html:
                             chapter_body_parts.append(toc_html)
                             continue
-
-                    if is_toc_page(page_number, edit_rules) and edit_rules.toc.mode == "skip":
-                        continue
 
                     page_content = extractor.extract_page(page_index)
                     classified_blocks = classifier.classify_page(page_content)
@@ -187,7 +187,6 @@ def convert_pdf_to_epub(
                 )
 
             writer.write(output_epub)
-
             return output_epub
 
         finally:
