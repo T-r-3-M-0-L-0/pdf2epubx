@@ -5,6 +5,7 @@ from typing import Literal
 
 
 TableMode = Literal["text", "image", "hybrid"]
+ProgrammingLanguage = Literal["General", "Python", "Java", "Golang", "C++", "C#", "C", "PowerShell", "Bash"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class ConversionProfile:
 
     fallback_render_empty_pages: bool
     fallback_render_low_confidence_pages: bool
+
+    programming_language: ProgrammingLanguage = "General"
 
 
 PROFILES: dict[str, ConversionProfile] = {
@@ -93,31 +96,48 @@ PROFILES: dict[str, ConversionProfile] = {
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
     ),
-    # === НОВЫЙ ПРОФИЛЬ ДЛЯ КНИГ ПО ПРОГРАММИРОВАНИЮ ===
     "programming": ConversionProfile(
         name="programming",
-        description="Books about programming, Python, AI, Telegram bots, code examples (best paragraph joining).",
+        description="Books about programming, code examples, Python, Java, Golang, C/C++, etc.",
         force_facsimile=False,
         preserve_images=False,
         preserve_code_blocks=True,
         detect_tables=True,
         table_mode="hybrid",
         join_paragraph_lines=True,
-        aggressive_paragraph_joining=True,      # ← главное отличие
+        aggressive_paragraph_joining=True,
         remove_headers_footers=True,
         detect_headings=True,
         split_by_outline=True,
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
+        programming_language="General",
     ),
 }
 
 
-def get_profile(profile_name: str) -> ConversionProfile:
+def get_profile(profile_name: str, programming_language: ProgrammingLanguage = "General") -> ConversionProfile:
     normalized = profile_name.strip().lower()
-
     if normalized not in PROFILES:
         available = ", ".join(sorted(PROFILES))
         raise ValueError(f"Unknown profile '{profile_name}'. Available profiles: {available}")
-
-    return PROFILES[normalized]
+    profile = PROFILES[normalized]
+    if normalized == "programming":
+        return ConversionProfile(
+            name=profile.name,
+            description=profile.description,
+            force_facsimile=profile.force_facsimile,
+            preserve_images=profile.preserve_images,
+            preserve_code_blocks=profile.preserve_code_blocks,
+            detect_tables=profile.detect_tables,
+            table_mode=profile.table_mode,
+            join_paragraph_lines=profile.join_paragraph_lines,
+            aggressive_paragraph_joining=profile.aggressive_paragraph_joining,
+            remove_headers_footers=profile.remove_headers_footers,
+            detect_headings=profile.detect_headings,
+            split_by_outline=profile.split_by_outline,
+            fallback_render_empty_pages=profile.fallback_render_empty_pages,
+            fallback_render_low_confidence_pages=profile.fallback_render_low_confidence_pages,
+            programming_language=programming_language,
+        )
+    return profile
