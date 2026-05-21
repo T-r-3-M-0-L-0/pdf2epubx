@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-import fitz
+import fitz  # PyMuPDF
 
 from pdf2epubx.utils import normalize_for_repetition, normalize_spaces
 
@@ -34,6 +34,42 @@ def repair_broken_paragraphs(text: str, level: str = "Medium") -> str:
     return text.strip()
 
 
+def clean_garbage_symbols(text: str) -> str:
+    """Максимально агрессивная очистка маркеров списков (включая выноски и отступы)"""
+    # 1. z z и zz
+    text = re.sub(r'z[\s\n\r]*z', '•', text, flags=re.IGNORECASE)
+    text = re.sub(r'zz+', '•', text, flags=re.IGNORECASE)
+
+    # 2. Белые квадраты (основная проблема)
+    text = re.sub(r'□+', '•', text)                    # □□□□□
+    text = re.sub(r'□\s*□', '•', text)                 # □ □
+    text = re.sub(r'□\s+', '• ', text)                 # □ + пробел
+
+    # 3. Квадраты в начале строки (включая отступы)
+    text = re.sub(r'^\s*□+', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*□\s+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'\n\s*□\s+([А-ЯA-Zа-яa-z])', r'\n• \1', text, flags=re.IGNORECASE)
+
+    # 4. z в начале строки (включая отступы)
+    text = re.sub(r'^\s*z\s+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'\n\s*z\s+([А-ЯA-Zа-яa-z])', r'\n• \1', text, flags=re.IGNORECASE)
+
+    # 5. Остальные маркеры
+    replacements = {
+        r'■': '•',
+        r'▪': '•',
+        r'▫': '•',
+        r'●': '•',
+        r'○': '•',
+        r'·': '•',
+        r'∙': '•',
+    }
+    for pattern, repl in replacements.items():
+        text = re.sub(pattern, repl, text)
+
+    return text
+
+
 def clean_chart_artifacts(text: str, preserve_figure_references: bool = False) -> str:
     lines = text.split('\n')
     clean_lines = []
@@ -61,12 +97,13 @@ def clean_chart_artifacts(text: str, preserve_figure_references: bool = False) -
             (length < 60 and any(kw in lower for kw in ["mainframe", "мейнфрейм", "оператор", "пакет заданий", "ввода", "польз.", "терминал", "устройство", "график", "трафика"]))
         ):
             continue
+
         clean_lines.append(line)
     return '\n'.join(clean_lines)
 
 
 def clean_text_post_processing_full(text: str, aggressive_level: str = "Medium", preserve_figure_references: bool = False) -> str:
-    text = clean_garbage_symbols(text)
+    text = clean_garbage_symbols(text)                    # ← первая и самая важная
     text = clean_page_numbers(text)
     text = clean_toc_leaders(text)
     text = clean_side_chapter_numbers(text)
@@ -75,18 +112,6 @@ def clean_text_post_processing_full(text: str, aggressive_level: str = "Medium",
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r'[ \t]+', ' ', text)
     return text.strip()
-
-
-def clean_garbage_symbols(text: str) -> str:
-    replacements = {
-        r'z\s*z': '•', r'zz': '•', r'z→': '→', r'z←': '←',
-        r'z↑': '↑', r'z↓': '↓', r'z\.': '•',
-        r'\s+·\s+': ' • ',
-        r'■': '•', r'□': '•', r'▪': '•', r'▫': '•',
-    }
-    for pattern, repl in replacements.items():
-        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
-    return text
 
 
 def clean_page_numbers(text: str) -> str:
@@ -120,31 +145,25 @@ def detect_repeated_marginal_texts(
 ) -> set[str]:
     counter: Counter[str] = Counter()
     page_count = min(len(doc), max_pages)
-
     for page_index in range(page_count):
         page = doc[page_index]
         height = float(page.rect.height)
         top_limit = height * top_ratio
         bottom_limit = height * (1.0 - bottom_ratio)
-
         data = page.get_text("dict", sort=True)
-
         for block in data.get("blocks", []):
             if block.get("type") != 0:
                 continue
             bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
             if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
                 continue
-
             y0, y1 = float(bbox[1]), float(bbox[3])
             if not (y1 <= top_limit or y0 >= bottom_limit):
                 continue
-
             text = extract_text_from_block_dict(block)
             normalized = normalize_for_repetition(text)
             if len(normalized) >= 3:
                 counter[normalized] += 1
-
     return {text for text, count in counter.items() if count >= min_repeats}
 
 
