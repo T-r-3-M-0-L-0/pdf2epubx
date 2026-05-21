@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
-import fitz
 from pathlib import Path
+
+import fitz
+
 from pdf2epubx.chaptering import build_chapter_plan
 from pdf2epubx.classifier import BlockClassifier
 from pdf2epubx.cleanup import detect_repeated_marginal_texts
@@ -17,6 +19,7 @@ from pdf2epubx.renderer import HtmlRenderer
 from pdf2epubx.toc_parser import parse_toc_page, render_toc_entries
 from pdf2epubx.utils import clean_metadata_value, html_escape, safe_filename_fragment
 
+
 def convert_pdf_to_epub(
     input_pdf: Path,
     output_epub: Path,
@@ -29,20 +32,21 @@ def convert_pdf_to_epub(
     pages_per_chapter: int = 10,
     rules_path: Path | None = None,
     split_by_outline: bool | None = None,
-    # === НОВЫЕ ПАРАМЕТРЫ ИЗ GUI ===
     header_height: float = 50.0,
     footer_height: float = 45.0,
     preserve_images: bool = True,
     skip_printed_toc: bool = False,
+    aggressive_level: str = "Medium",
+    preserve_figure_references: bool = False,
+    programming_language: str = "General",
 ) -> Path:
     """
     Основная функция конвертации PDF → EPUB.
-    Все новые параметры из GUI добавлены с дефолтными значениями.
     """
     input_pdf = input_pdf.resolve()
     output_epub = output_epub.resolve()
 
-    profile = get_profile(profile_name)
+    profile = get_profile(profile_name, programming_language=programming_language)
     edit_rules = load_edit_rules(rules_path)
 
     if pages_per_chapter < 1:
@@ -99,11 +103,10 @@ def convert_pdf_to_epub(
                 identifier=identifier,
             )
 
-            # Передаём новые параметры в extractor и renderer
             extractor = PdfExtractor(
                 doc=doc,
                 edit_rules=edit_rules,
-                preserve_images=preserve_images,      # ← новая передача
+                preserve_images=preserve_images,
             )
 
             repeated_marginals = (
@@ -124,10 +127,12 @@ def convert_pdf_to_epub(
                 profile=profile,
                 writer=writer,
                 edit_rules=edit_rules,
-                header_height=header_height,          # ← новая передача
-                footer_height=footer_height,          # ← новая передача
-                preserve_images=preserve_images,      # ← новая передача
-                skip_printed_toc=skip_printed_toc,    # ← новая передача
+                header_height=header_height,
+                footer_height=footer_height,
+                preserve_images=preserve_images,
+                skip_printed_toc=skip_printed_toc,
+                aggressive_level=aggressive_level,
+                preserve_figure_references=preserve_figure_references,
             )
 
             effective_split_by_outline = (
@@ -154,7 +159,6 @@ def convert_pdf_to_epub(
                     pdf_page = doc[page_index]
                     page_number = page_index + 1
 
-                    # Пропуск печатного оглавления
                     if skip_printed_toc and is_toc_page(page_number, edit_rules):
                         continue
 
