@@ -3,7 +3,9 @@ from tkinterdnd2 import *
 from pathlib import Path
 import threading
 from tkinter import filedialog, messagebox
+
 from pdf2epubx.converter import convert_pdf_to_epub
+from pdf2epubx.profiles import ProgrammingLanguage
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -12,51 +14,65 @@ ctk.set_default_color_theme("blue")
 class Pdf2EpubGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("pdf2epubx — конвертер из PDF в EPUB с различными профилями")
-        self.geometry("980x980")
+        self.title("pdf2epubx — PDF → EPUB (для Xteink X3)")
+        self.geometry("1100x980")
         self.resizable(True, True)
 
-        ctk.CTkLabel(self, text="pdf2epubx Converter", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=20)
+        ctk.CTkLabel(self, text="pdf2epubx Converter", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=15)
 
-        # PDF файл
+        main_frame = ctk.CTkFrame(self)
+        main_frame.pack(padx=30, pady=10, fill="both", expand=True)
+
+        ctk.CTkLabel(main_frame, text="PDF файл:").pack(anchor="w", padx=20, pady=(10,0))
         self.pdf_path = ctk.StringVar()
-        ctk.CTkLabel(self, text="PDF файл:").pack(anchor="w", padx=40)
-        self.file_entry = ctk.CTkEntry(self, textvariable=self.pdf_path, width=760)
-        self.file_entry.pack(pady=8, padx=40)
-        ctk.CTkButton(self, text="Выбрать PDF", command=self.browse_pdf).pack(pady=5)
+        self.file_entry = ctk.CTkEntry(main_frame, textvariable=self.pdf_path, width=850)
+        self.file_entry.pack(pady=5, padx=20)
+        ctk.CTkButton(main_frame, text="Выбрать PDF", command=self.browse_pdf).pack(pady=5)
 
-        # Профиль
-        ctk.CTkLabel(self, text="Профиль:").pack(anchor="w", padx=40, pady=(20, 5))
+        ctk.CTkLabel(main_frame, text="Профиль:").pack(anchor="w", padx=20, pady=(15,0))
         self.profile_var = ctk.StringVar(value="technical")
-        ctk.CTkOptionMenu(self, values=["novel", "technical", "programming", "hybrid", "facsimile"],
-                          variable=self.profile_var).pack(pady=5, padx=40)
+        self.profile_menu = ctk.CTkOptionMenu(main_frame, values=["novel", "technical", "programming", "hybrid", "facsimile"], variable=self.profile_var, command=self.update_programming_options)
+        self.profile_menu.pack(pady=5, padx=20)
 
-        # Настройки колонтитулов
-        ctk.CTkLabel(self, text="Высота верхнего колонтитула (points):", font=ctk.CTkFont(size=13)).pack(anchor="w", padx=40, pady=(20, 0))
-        self.header_height = ctk.DoubleVar(value=50.0)
-        ctk.CTkSlider(self, from_=20, to=120, variable=self.header_height, number_of_steps=100).pack(padx=40, pady=5, fill="x")
-        ctk.CTkLabel(self, textvariable=self.header_height).pack(anchor="e", padx=40)
+        self.programming_lang_var = ctk.StringVar(value="General")
+        self.lang_frame = ctk.CTkFrame(main_frame)
+        ctk.CTkLabel(self.lang_frame, text="Язык программирования:").pack(side="left", padx=5)
+        self.lang_menu = ctk.CTkOptionMenu(self.lang_frame, values=["General", "Python", "Java", "Golang", "C++", "C#", "C", "PowerShell", "Bash"], variable=self.programming_lang_var)
+        self.lang_menu.pack(side="left", padx=5)
+        self.lang_frame.pack(pady=5, padx=20, anchor="w")
+        self.lang_frame.pack_forget()
 
-        ctk.CTkLabel(self, text="Высота нижнего колонтитула (points):", font=ctk.CTkFont(size=13)).pack(anchor="w", padx=40, pady=(15, 0))
-        self.footer_height = ctk.DoubleVar(value=45.0)
-        ctk.CTkSlider(self, from_=20, to=120, variable=self.footer_height, number_of_steps=100).pack(padx=40, pady=5, fill="x")
-        ctk.CTkLabel(self, textvariable=self.footer_height).pack(anchor="e", padx=40)
+        ctk.CTkLabel(main_frame, text="Склейка параграфов:").pack(anchor="w", padx=20, pady=(15,0))
+        self.aggressive_var = ctk.StringVar(value="Medium")
+        ctk.CTkOptionMenu(main_frame, values=["Low", "Medium", "Aggressive"], variable=self.aggressive_var).pack(pady=5, padx=20)
 
-        # === НОВЫЕ ОПЦИИ ===
+        self.disable_join_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(main_frame, text="Полностью отключить склейку параграфов", variable=self.disable_join_var).pack(anchor="w", padx=20, pady=5)
+
         self.preserve_images_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(self, text="Сохранять изображения (схемы, диаграммы)", variable=self.preserve_images_var).pack(anchor="w", padx=40, pady=(20, 5))
-        self.skip_toc_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self, text="Пропускать печатное оглавление (первые страницы)", variable=self.skip_toc_var).pack(anchor="w", padx=40, pady=5)
+        ctk.CTkCheckBox(main_frame, text="Сохранять изображения", variable=self.preserve_images_var).pack(anchor="w", padx=20, pady=5)
 
-        # Кнопка
-        self.convert_btn = ctk.CTkButton(
-            self, text="Конвертировать в EPUB", font=ctk.CTkFont(size=18),
-            height=50, command=self.start_conversion
-        )
-        self.convert_btn.pack(pady=30)
+        self.preserve_figure_references_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(main_frame, text="Сохранять ссылки на рисунки (на рис. 1.4 и т.п.)", variable=self.preserve_figure_references_var).pack(anchor="w", padx=20, pady=5)
 
-        self.log = ctk.CTkTextbox(self, height=220, width=880)
-        self.log.pack(pady=10, padx=40)
+        self.convert_btn = ctk.CTkButton(self, text="Конвертировать в EPUB", font=ctk.CTkFont(size=18), height=55, command=self.start_conversion)
+        self.convert_btn.pack(pady=25)
+
+        self.log = ctk.CTkTextbox(self, height=320, width=1050, font=ctk.CTkFont(size=13))
+        self.log.pack(pady=10, padx=30)
+
+        ctk.CTkButton(self, text="Копировать лог", command=self.copy_log).pack(pady=8)
+
+    def update_programming_options(self, *args):
+        if self.profile_var.get() == "programming":
+            self.lang_frame.pack(pady=5, padx=20, anchor="w")
+        else:
+            self.lang_frame.pack_forget()
+
+    def copy_log(self):
+        text = self.log.get("1.0", "end-1c")
+        self.clipboard_clear()
+        self.clipboard_append(text)
 
     def browse_pdf(self):
         path = filedialog.askopenfilename(filetypes=[("PDF files", "*.pdf")])
@@ -69,7 +85,7 @@ class Pdf2EpubGUI(ctk.CTk):
             return
 
         self.convert_btn.configure(state="disabled")
-        self.log.insert("end", "Запуск конвертации...\n")
+        self.log.insert("end", "🚀 Запуск конвертации...\n")
         self.log.see("end")
 
         threading.Thread(target=self.run_conversion, daemon=True).start()
@@ -78,35 +94,33 @@ class Pdf2EpubGUI(ctk.CTk):
         input_path = Path(self.pdf_path.get())
         output_path = input_path.with_suffix(".epub")
 
+        aggressive_level = "Off" if self.disable_join_var.get() else self.aggressive_var.get()
+
         try:
-            self.log.insert("end", f"Файл: {input_path.name}\n")
-            self.log.insert("end", f"Профиль: {self.profile_var.get()}\n")
-            self.log.insert("end", f"Изображения: {'включены' if self.preserve_images_var.get() else 'ПРОПУЩЕНЫ'}\n")
-            self.log.insert("end", f"Оглавление: {'пропущено' if self.skip_toc_var.get() else 'включено'}\n")
+            self.log.insert("end", f"📄 Файл: {input_path.name}\n")
+            self.log.insert("end", f"📌 Профиль: {self.profile_var.get()}\n")
+            if self.profile_var.get() == "programming":
+                self.log.insert("end", f"📌 Язык: {self.programming_lang_var.get()}\n")
+            self.log.insert("end", f"📌 Склейка: {aggressive_level}\n")
+            self.log.insert("end", f"🖼️ Изображения: {'вкл' if self.preserve_images_var.get() else 'выкл'}\n")
+            self.log.insert("end", f"🔗 Ссылки на рисунки: {'сохраняются' if self.preserve_figure_references_var.get() else 'очищаются'}\n")
             self.log.see("end")
 
             result_path = convert_pdf_to_epub(
                 input_pdf=input_path,
                 output_epub=output_path,
                 profile_name=self.profile_var.get(),
-                header_height=self.header_height.get(),
-                footer_height=self.footer_height.get(),
-                preserve_images=self.preserve_images_var.get(),   # ← новая передача
-                skip_printed_toc=self.skip_toc_var.get(),         # ← новая передача
-                title=None,
-                author=None,
-                language="ru",
-                ocr_mode="auto",
-                ocr_language="rus+eng",
-                pages_per_chapter=10,
-                split_by_outline=True,
+                aggressive_level=aggressive_level,
+                preserve_images=self.preserve_images_var.get(),
+                preserve_figure_references=self.preserve_figure_references_var.get(),
+                programming_language=self.programming_lang_var.get() if self.profile_var.get() == "programming" else "General",
             )
 
-            self.log.insert("end", "Конвертация завершена успешно!\n")
-            self.log.insert("end", f"EPUB: {result_path.name}\n\n")
+            self.log.insert("end", "✅ Конвертация завершена успешно!\n")
+            self.log.insert("end", f"📚 Результат: {result_path.name}\n\n")
 
         except Exception as e:
-            self.log.insert("end", f"Ошибка:\n{str(e)}\n\n")
+            self.log.insert("end", f"❌ Ошибка:\n{str(e)}\n\n")
         finally:
             self.convert_btn.configure(state="normal")
             self.log.see("end")
