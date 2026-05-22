@@ -1,0 +1,27 @@
+{
+  "crop": {
+    "mode": "ratio",
+    "top_ratio": 0.045,
+    "bottom_ratio": 0.045,
+    "left_ratio": 0.0,
+    "right_ratio": 0.0
+  },
+  "toc": {
+    "mode": "auto",
+    "pages": "",
+    "drop_original_dot_leaders": true
+  },
+  "headers_footers": {
+    "remove_repeated": true,
+    "remove_page_numbers": true,
+    "top_ratio": 0.10,
+    "bottom_ratio": 0.10,
+    "min_repeats": 3
+  },
+  "code": {
+    "repair_git_spacing": true,
+    "detect_commit_blocks": true,
+    "detect_diff_blocks": true
+  },
+  "exclude_regions": []
+}

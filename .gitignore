@@ -1,4 +1,43 @@
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.Python
+venv/
+.venv/
+.env
+.env.local
+.env.*
+
+# Build artifacts
 build/
-src/pdf2epubx/__pycache__/
-src/pdf2epubx.egg-info/
 dist/
+*.egg
+*.whl
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS
+.DS_Store
+Thumbs.db
+```

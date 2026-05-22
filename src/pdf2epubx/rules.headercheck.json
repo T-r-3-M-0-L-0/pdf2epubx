@@ -1,0 +1,11 @@
+{
+  "headers_footers": {
+    "remove_repeated": true,
+    "remove_page_numbers": true,
+    "top_ratio": 0.10,
+    "bottom_ratio": 0.10,
+    "min_repeats": 3,
+    "header_height_points": 50,
+    "footer_height_points": 45
+  }
+}
