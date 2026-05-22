@@ -121,14 +121,24 @@ class HtmlRenderer:
         return f"<pre><code>{html_escape(text)}</code></pre>"
 
     def render_table(self, block: RawBlock) -> str:
+        """Рендерит таблицу."""
         lines = self.block_lines_preserve(block)
         text = "\n".join(lines).rstrip()
         if not text:
             return ""
-        text = repair_code_text(text, repair_git_spacing=False)
-        if self.profile.table_mode in {"text", "hybrid"}:
-            return f'<pre class="table-text"><code>{html_escape(text)}</code></pre>'
-        return ""
+
+        # Пробуем распарсить как HTML таблицу
+        from pdf2epubx.table_parser import TableParser, render_table_html, render_table_fallback
+
+        parser = TableParser(mode="smart")
+        parsed_table = parser.parse_block(block)
+
+        if parsed_table and parsed_table.confidence > 0.6:
+            # Рендерим как настоящую HTML таблицу
+            return render_table_html(parsed_table, block)
+        else:
+            # Fallback на <pre>
+            return render_table_fallback(block)
 
     def render_caption(self, block: RawBlock) -> str:
         text = self.block_text_joined(block)

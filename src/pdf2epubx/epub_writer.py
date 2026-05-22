@@ -15,6 +15,9 @@ class EpubWriter:
         author: str,
         language: str,
         identifier: str,
+        optimize_images: bool = False,
+        image_quality: int = 85,
+        image_format: str = "webp",
     ) -> None:
         self.book = epub.EpubBook()
         self.book.set_identifier(identifier)
@@ -25,6 +28,20 @@ class EpubWriter:
         self.chapters: list[epub.EpubHtml] = []
         self.chapter_file_names: set[str] = set()
         self.image_hash_to_file_name: dict[str, str] = {}
+
+        # Оптимизация изображений
+        self.optimize_images = optimize_images
+        self.image_quality = image_quality
+        self.image_format = image_format
+
+        if optimize_images:
+            from pdf2epubx.image_optimizer import ImageOptimizer
+            self.image_optimizer = ImageOptimizer(
+                quality=image_quality,
+                output_format=image_format,  # type: ignore
+            )
+        else:
+            self.image_optimizer = None
 
         self.css_item = epub.EpubItem(
             uid="style_main",
@@ -77,6 +94,10 @@ class EpubWriter:
 
         if normalized_ext == "jpg":
             normalized_ext = "jpeg"
+
+        # Оптимизация изображения если включена
+        if self.image_optimizer:
+            image_bytes, normalized_ext = self.image_optimizer.optimize(image_bytes, ext)
 
         image_hash = sha256_hex(image_bytes)
         existing_file_name = self.image_hash_to_file_name.get(image_hash)
