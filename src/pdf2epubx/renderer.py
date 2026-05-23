@@ -9,6 +9,7 @@ from pdf2epubx.profiles import ConversionProfile
 from pdf2epubx.utils import html_escape, normalize_line, repair_hyphenation, safe_filename_fragment
 from pdf2epubx.code_repair import repair_code_text
 from pdf2epubx.edit_rules import EditRules
+from pdf2epubx.quality_scorer import score_page_quality
 
 
 class HtmlRenderer:
@@ -23,6 +24,7 @@ class HtmlRenderer:
         skip_printed_toc: bool = False,
         aggressive_level: str = "Medium",
         preserve_figure_references: bool = False,
+        auto_quality_fallback: bool = False,
     ) -> None:
         self.profile = profile
         self.writer = writer
@@ -33,6 +35,10 @@ class HtmlRenderer:
         self.skip_printed_toc = skip_printed_toc
         self.aggressive_level = aggressive_level
         self.preserve_figure_references = preserve_figure_references
+        self.auto_quality_fallback = auto_quality_fallback
+
+        # Статистика quality для лога
+        self.quality_stats: list[tuple[int, float, str]] = []  # (page_number, score, strategy)
 
     def render_pdf_page_as_facsimile(self, page: fitz.Page, page_number: int) -> str:
         matrix = fitz.Matrix(2.0, 2.0)
@@ -53,6 +59,16 @@ class HtmlRenderer:
         if self.profile.force_facsimile:
             return self.render_pdf_page_as_facsimile(pdf_page, page.page_number)
 
+        # Quality-based fallback: оцениваем качество и решаем стратегию
+        if self.auto_quality_fallback and self.profile.fallback_render_low_confidence_pages:
+            quality = score_page_quality(page)
+            self.quality_stats.append((page.page_number, quality.score, quality.strategy))
+
+            if quality.strategy == "facsimile":
+                return self.render_pdf_page_as_facsimile(pdf_page, page.page_number)
+            elif quality.strategy == "hybrid":
+                return self._render_hybrid_page(pdf_page, page, blocks)
+
         parts: list[str] = [f'<section class="pdf-page" id="page-{page.page_number}">']
         visible_count = 0
 
@@ -63,6 +79,28 @@ class HtmlRenderer:
                 visible_count += 1
 
         if visible_count == 0 and self.profile.fallback_render_empty_pages:
+            parts.append(self.render_page_fallback_image(pdf_page, page.page_number))
+
+        parts.append("</section>")
+        return "\n".join(parts)
+
+    def _render_hybrid_page(self, pdf_page: fitz.Page, page: PageContent, blocks: list[ClassifiedBlock]) -> str:
+        """
+        Hybrid рендеринг: текст + fallback-изображение для подстраховки.
+        Полезно для страниц со средним качеством текста.
+        """
+        parts: list[str] = [f'<section class="pdf-page hybrid-page" id="page-{page.page_number}">']
+
+        # Сначала текстовый контент
+        visible_count = 0
+        for block in blocks:
+            html = self.render_block(page, block)
+            if html:
+                parts.append(html)
+                visible_count += 1
+
+        # Если текст есть, но качество среднее — добавляем изображение как доп. контекст
+        if visible_count == 0:
             parts.append(self.render_page_fallback_image(pdf_page, page.page_number))
 
         parts.append("</section>")
@@ -195,3 +233,21 @@ class HtmlRenderer:
             if text:
                 result.append(text)
         return result
+
+    def get_quality_summary(self) -> dict:
+        """Возвращает сводку по качеству страниц."""
+        if not self.quality_stats:
+            return {"total_scored": 0}
+
+        scores = [s[1] for s in self.quality_stats]
+        strategies = [s[2] for s in self.quality_stats]
+
+        return {
+            "total_scored": len(self.quality_stats),
+            "avg_score": sum(scores) / len(scores),
+            "min_score": min(scores),
+            "max_score": max(scores),
+            "text_pages": strategies.count("text"),
+            "hybrid_pages": strategies.count("hybrid"),
+            "facsimile_pages": strategies.count("facsimile"),
+        }

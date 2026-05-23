@@ -68,7 +68,7 @@ class EpubWriter:
         chapter_number = len(self.chapters) + 1
         chapter_uid = f"chapter_{chapter_number:04d}"
 
-        print(f"DEBUG add_chapter: uid={chapter_uid}, title={title}, file={file_name}")
+
 
         chapter = epub.EpubHtml(
             uid=chapter_uid,
@@ -77,7 +77,8 @@ class EpubWriter:
             lang=language,
         )
 
-        chapter.content = html_body
+        full_xhtml = self._wrap_xhtml(html_body, title, language)
+        chapter.content = full_xhtml.encode("utf-8")
         chapter.add_item(self.css_item)
 
         self.book.add_item(chapter)
@@ -128,6 +129,25 @@ class EpubWriter:
         self.book.add_item(epub.EpubNav())
 
         epub.write_epub(str(output_epub), self.book, {})
+
+    @staticmethod
+    def _wrap_xhtml(body_html: str, title: str, language: str = "ru") -> str:
+        """Оборачивает HTML-фрагмент в полный XHTML-документ."""
+        from pdf2epubx.utils import html_escape
+        escaped_title = html_escape(title)
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<!DOCTYPE html>\n'
+            f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{language}" lang="{language}">\n'
+            '<head>\n'
+            f'<title>{escaped_title}</title>\n'
+            '<link rel="stylesheet" type="text/css" href="../style/main.css"/>\n'
+            '</head>\n'
+            '<body>\n'
+            f'{body_html}\n'
+            '</body>\n'
+            '</html>'
+        )
 
     @staticmethod
     def guess_media_type(ext: str) -> str:

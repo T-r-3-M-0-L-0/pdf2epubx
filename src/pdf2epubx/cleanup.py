@@ -9,63 +9,143 @@ from pdf2epubx.utils import normalize_for_repetition, normalize_spaces
 
 
 def repair_broken_paragraphs(text: str, level: str = "Medium") -> str:
+    """
+    Склеивает разорванные параграфы.
+
+    Уровни:
+    - Off — не трогать
+    - Low — только дефисные переносы
+    - Medium — склеивание строк, не заканчивающихся на .!?:;
+    - Aggressive — также убирает лишние пробелы внутри слов (опасно)
+    """
     if level == "Off":
         return text
+
     lines = [line.rstrip() for line in text.split('\n')]
     result: list[str] = []
+
     for line in lines:
         stripped = line.strip()
+
+        # Пустая строка → разделитель параграфов
         if not stripped:
-            result.append(line)
+            result.append("")
             continue
-        if result and not re.search(r'[.!?]$', result[-1].strip()):
-            prev = result.pop()
-            joined = prev.rstrip('- ') + " " + stripped.lstrip('- ')
-            result.append(joined)
-        else:
-            result.append(line)
+
+        # Первая строка — просто добавляем
+        if not result or not result[-1]:
+            result.append(stripped)
+            continue
+
+        prev = result[-1].rstrip()
+
+        # Low: только дефисные переносы (слово-\n продолжение)
+        if prev.endswith("-") and stripped and stripped[0].islower():
+            result[-1] = prev[:-1] + stripped
+            continue
+
+        # Medium: склеиваем если предыдущая строка НЕ заканчивается
+        # на терминальную пунктуацию и текущая начинается с маленькой буквы
+        if level in ("Medium", "Aggressive"):
+            ends_with_terminal = bool(re.search(r'[.!?;:»"]\s*$', prev))
+            starts_with_lower = bool(stripped) and stripped[0].islower()
+            starts_with_continuation = starts_with_lower or stripped[0] in '(«"—–'
+
+            # Не склеиваем заголовки (короткие строки + капитализация)
+            prev_is_heading = len(prev) < 80 and not ends_with_terminal and prev[0].isupper()
+            current_is_heading = len(stripped) < 80 and stripped[0].isupper() and not starts_with_continuation
+
+            if not ends_with_terminal and starts_with_continuation and not current_is_heading:
+                result[-1] = prev + " " + stripped
+                continue
+
+        result.append(stripped)
+
     text = '\n'.join(result)
-    if level in ["Medium", "Aggressive"]:
-        text = re.sub(r'(\S)\s*\n\s*(\S)', r'\1 \2', text)
-        text = re.sub(r'\s{2,}', ' ', text)
-    if level == "Aggressive":
-        text = re.sub(r'([a-zA-Zа-яА-Я0-9])\s+([a-zA-Zа-яА-Я0-9])', r'\1\2', text)
-        text = re.sub(r'-\s+', '', text)
+
+    # Убираем двойные пробелы
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+
     return text.strip()
 
 
 def clean_garbage_symbols(text: str) -> str:
     """Максимально агрессивная очистка маркеров списков (включая выноски и отступы)"""
-    # 1. z z и zz
-    text = re.sub(r'z[\s\n\r]*z', '•', text, flags=re.IGNORECASE)
+
+    # 0. Нормализуем все виды whitespace (включая NBSP, тонкие пробелы и т.д.)
+    # Это важно, потому что между символами могут быть специальные пробелы
+    text = re.sub(r'[\u00A0\u2000-\u200B\u202F\u3000]', ' ', text)
+
+    # 1. z z и zz (включая варианты с разными пробелами после нормализации)
+    text = re.sub(r'z\s+z', '•', text, flags=re.IGNORECASE)
     text = re.sub(r'zz+', '•', text, flags=re.IGNORECASE)
-
-    # 2. Белые квадраты (основная проблема)
-    text = re.sub(r'□+', '•', text)                    # □□□□□
-    text = re.sub(r'□\s*□', '•', text)                 # □ □
-    text = re.sub(r'□\s+', '• ', text)                 # □ + пробел
-
-    # 3. Квадраты в начале строки (включая отступы)
-    text = re.sub(r'^\s*□+', '• ', text, flags=re.MULTILINE)
-    text = re.sub(r'^\s*□\s+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE | re.IGNORECASE)
-    text = re.sub(r'\n\s*□\s+([А-ЯA-Zа-яa-z])', r'\n• \1', text, flags=re.IGNORECASE)
-
-    # 4. z в начале строки (включая отступы)
+    # Отдельная Z в начале строки перед буквой
     text = re.sub(r'^\s*z\s+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE | re.IGNORECASE)
     text = re.sub(r'\n\s*z\s+([А-ЯA-Zа-яa-z])', r'\n• \1', text, flags=re.IGNORECASE)
 
-    # 5. Остальные маркеры
-    replacements = {
-        r'■': '•',
-        r'▪': '•',
-        r'▫': '•',
-        r'●': '•',
-        r'○': '•',
-        r'·': '•',
-        r'∙': '•',
+    # 2. Все виды квадратов и других маркеров (расширенный список Unicode)
+    # Основные квадраты и подобные символы
+    square_chars = '□■▪▫●○·∙⬜⬛◻◼▢❑❒☐'
+
+    # Сначала обрабатываем комбинации квадратов в начале строки (самый частый случай)
+    # Паттерн: начало строки + отступы + один или несколько квадратов + пробелы
+    text = re.sub(rf'^\s*[{square_chars}]+[ \t]*', '• ', text, flags=re.MULTILINE)
+    text = re.sub(rf'\n\s*[{square_chars}]+[ \t]*', '\n• ', text, flags=re.IGNORECASE)
+
+    # Затем обрабатываем квадраты в середине текста (комбинации)
+    # Паттерн: квадрат(пробелы+квадрат)* - последовательность квадратов через пробелы
+    text = re.sub(rf'[{square_chars}](?:[ \t]*[{square_chars}])*', '•', text)
+
+    # 3. Дополнительные маркеры списков (bullet-like symbols)
+    bullet_replacements = {
+        '▪': '•', '▫': '•', '■': '•', '●': '•', '○': '•',
+        '·': '•', '∙': '•', '◦': '•', '‣': '•', '⁃': '•',
+        '◘': '•', '◙': '•', '⦿': '•', '⦾': '•',
+        # Checkbox-символы
+        '☐': '•', '☑': '•', '☒': '•',
+        # Геометрические фигуры
+        '⬜': '•', '⬛': '•', '◻': '•', '◼': '•', '▢': '•',
+        '❑': '•', '❒': '•', '❖': '•',
+        # Стрелки и указатели (иногда используются как маркеры)
+        '➢': '•', '➣': '•', '➤': '•', '➥': '•', '➧': '•',
+        '➨': '•', '➩': '•', '➪': '•', '➫': '•', '➬': '•',
+        '➭': '•', '➮': '•', '➯': '•', '➱': '•', '➲': '•',
+        '➳': '•', '➴': '•', '➵': '•', '➶': '•', '➷': '•',
+        '➸': '•', '➹': '•', '➺': '•', '➻': '•', '➼': '•',
+        '➽': '•', '➾': '•',
+        # Звёздочки и другие символы
+        '✦': '•', '✧': '•', '★': '•', '☆': '•',
+        '✩': '•', '✪': '•', '✫': '•', '✬': '•', '✭': '•',
+        '✮': '•', '✯': '•', '✰': '•',
+        # Ромбы
+        '♦': '•', '◊': '•', '🞐': '•', '🞑': '•', '🞒': '•', '🞓': '•',
+        # Треугольники
+        '▲': '•', '▼': '•', '◀': '•', '▶': '•',
+        '△': '•', '▽': '•', '◁': '•', '▷': '•',
     }
-    for pattern, repl in replacements.items():
-        text = re.sub(pattern, repl, text)
+    for char, repl in bullet_replacements.items():
+        text = text.replace(char, repl)
+
+    # 4. Символы Private Use Area (PUA), которые часто используются для кастомных маркеров
+    # Диапазоны: U+E000-U+F8FF, U+F0000-U+FFFFD, U+100000-U+10FFFD
+    # Наиболее распространённые маркеры в PUA: U+F06C, U+F0B7, U+F0A1
+    pua_markers = '\uF06C\uF0B7\uF0A1\uF06E\uF070\uF0A7\uF0AD'
+    text = re.sub(f'[{pua_markers}]+', '•', text)
+
+    # 5. Удаляем одиночные символы в начале строки (альтернативные маркеры)
+    # Но только если это НЕ буквы алфавита и НЕ цифры
+    # Заменяем только специальные символы, которые могут быть артефактами OCR
+    # Паттерн: начало строки + отступ + одиночный символ (не буква/цифра) + пробел + текст
+    text = re.sub(r'^\s*[^\w\sа-яА-Яa-zA-Z][ \t]+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE)
+
+    # Исключение: если это всё-таки буква, но она повторяется в нескольких строках подряд
+    # (это может быть артефактом нумерации списка типа "a. b. c." или "z z z")
+    # Обработку таких случаев оставляем для специальных паттернов выше (z, zz)
+
+    # 6. Финальная очистка: множественные маркеры подряд и нормализация пробелов
+    text = re.sub(r'•+', '•', text)
+    # Убираем двойные пробелы после маркеров
+    text = re.sub(r'•[ \t]+', '• ', text)
 
     return text
 
@@ -115,10 +195,32 @@ def clean_text_post_processing_full(text: str, aggressive_level: str = "Medium",
 
 
 def clean_page_numbers(text: str) -> str:
+    """
+    Удаляет номера страниц, но НЕ трогает:
+    - Годы (1900–2099)
+    - Нумерованные списки (1. 2. 3.)
+    - Номера портов, кодов и т.п.
+    """
+    # Убираем явные маркеры "Page N", "Стр. N"
     text = re.sub(r'\bPage\s+\d+\b', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\bстр\.?\s*\d+\b', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s+\d+\s*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\s+\d+\s*\n', '\n', text)
+
+    # Убираем изолированные числа на отдельных строках (но НЕ годы, НЕ длинные числа)
+    # Только 1-4 цифры, стоящие как единственное содержимое строки
+    def _is_page_number(match: re.Match) -> str:
+        num = match.group(0).strip()
+        if not num.isdigit():
+            return match.group(0)
+        n = int(num)
+        # Не трогаем годы (1900–2099)
+        if 1900 <= n <= 2099:
+            return match.group(0)
+        # Не трогаем числа > 9999 (порты, коды)
+        if n > 9999:
+            return match.group(0)
+        return ""
+
+    text = re.sub(r'^\s*\d{1,4}\s*$', _is_page_number, text, flags=re.MULTILINE)
     return text.strip()
 
 

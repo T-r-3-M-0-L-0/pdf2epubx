@@ -5,6 +5,7 @@ import threading
 from tkinter import filedialog, messagebox
 
 from pdf2epubx.converter import convert_pdf_to_epub
+from pdf2epubx.ocr import is_ocr_available
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -14,7 +15,7 @@ class Pdf2EpubGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("pdf2epubx — PDF → EPUB (Advanced)")
-        self.geometry("1280x860")
+        self.geometry("1280x900")
         self.minsize(1100, 700)
 
         header = ctk.CTkLabel(self, text="pdf2epubx Converter", font=ctk.CTkFont(size=26, weight="bold"))
@@ -23,10 +24,9 @@ class Pdf2EpubGUI(ctk.CTk):
         main = ctk.CTkFrame(self)
         main.pack(fill="both", expand=True, padx=15, pady=10)
 
-        # Левая панель
-        left = ctk.CTkFrame(main, width=460)
+        # Левая панель (прокручиваемая)
+        left = ctk.CTkScrollableFrame(main, width=460)
         left.pack(side="left", fill="y", padx=(0, 12))
-        left.pack_propagate(False)
 
         # Правая панель (лог)
         right = ctk.CTkFrame(main)
@@ -74,6 +74,54 @@ class Pdf2EpubGUI(ctk.CTk):
 
         self.preserve_figure_references_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(left, text="Сохранять ссылки на рисунки", variable=self.preserve_figure_references_var).pack(anchor="w", padx=pad, pady=4)
+
+        # ═══════════════════════════════════════════════
+        # НОВЫЙ БЛОК: Парсинг сканов и качество
+        # ═══════════════════════════════════════════════
+        ctk.CTkLabel(left, text="🔍 Парсинг и качество (сканы)", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
+
+        self.normalize_scan_bold_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(left, text="Нормализовать bold в сканах",
+                        variable=self.normalize_scan_bold_var).pack(anchor="w", padx=pad, pady=2)
+        ctk.CTkLabel(left, text="    Убирает фальшивый bold (> 40% текста bold = артефакт)",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w", padx=pad)
+
+        self.auto_quality_fallback_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(left, text="Авто-fallback по качеству текста",
+                        variable=self.auto_quality_fallback_var).pack(anchor="w", padx=pad, pady=2)
+        ctk.CTkLabel(left, text="    Плохие страницы → изображение, средние → hybrid",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w", padx=pad)
+
+        # ═══════════════════════════════════════════════
+        # НОВЫЙ БЛОК: OCR
+        # ═══════════════════════════════════════════════
+        ctk.CTkLabel(left, text="📷 OCR", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
+
+        self.ocr_mode_var = ctk.StringVar(value="auto")
+        ocr_frame = ctk.CTkFrame(left)
+        ocr_frame.pack(fill="x", padx=pad, pady=4)
+        ctk.CTkLabel(ocr_frame, text="Режим:").pack(side="left", padx=5)
+        ctk.CTkOptionMenu(ocr_frame, values=["never", "auto", "always"],
+                          variable=self.ocr_mode_var, width=120).pack(side="left", padx=5)
+
+        self.ocr_language_var = ctk.StringVar(value="rus+eng")
+        ctk.CTkLabel(ocr_frame, text="Языки:").pack(side="left", padx=(15, 5))
+        ctk.CTkEntry(ocr_frame, textvariable=self.ocr_language_var, width=100).pack(side="left", padx=5)
+
+        # Показываем доступность OCR
+        ocr_status = is_ocr_available()
+        status_parts = []
+        if ocr_status["ocrmypdf"]:
+            status_parts.append("✅ ocrmypdf")
+        else:
+            status_parts.append("❌ ocrmypdf")
+        if ocr_status["tesseract"]:
+            status_parts.append("✅ tesseract")
+        else:
+            status_parts.append("❌ tesseract")
+
+        ctk.CTkLabel(left, text=f"    Доступно: {' | '.join(status_parts)}",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w", padx=pad)
 
         # Оптимизация изображений
         ctk.CTkLabel(left, text="🖼️ Оптимизация изображений", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
@@ -180,6 +228,9 @@ class Pdf2EpubGUI(ctk.CTk):
             self.log_message(f"   Язык: {self.programming_lang_var.get()}")
         self.log_message(f"🖼️ Изображения: {'вкл' if self.preserve_images_var.get() else 'выкл'}")
         self.log_message(f"🔗 Ссылки на рисунки: {'сохраняются' if self.preserve_figure_references_var.get() else 'очищаются'}")
+        self.log_message(f"🔍 Bold-нормализация: {'вкл' if self.normalize_scan_bold_var.get() else 'выкл'}")
+        self.log_message(f"🔍 Авто-fallback: {'вкл' if self.auto_quality_fallback_var.get() else 'выкл'}")
+        self.log_message(f"📷 OCR: {self.ocr_mode_var.get()} ({self.ocr_language_var.get()})")
         self.log_message("-" * 50)
 
         try:
@@ -191,31 +242,39 @@ class Pdf2EpubGUI(ctk.CTk):
                 preserve_images=self.preserve_images_var.get(),
                 preserve_figure_references=self.preserve_figure_references_var.get(),
                 programming_language=self.programming_lang_var.get() if self.profile_var.get() == "programming" else "General",
-                # Поддерживаемые параметры из твоего converter.py
+                # OCR
+                ocr_mode=self.ocr_mode_var.get(),
+                ocr_language=self.ocr_language_var.get(),
+                # Scan handling
+                normalize_scan_bold=self.normalize_scan_bold_var.get(),
+                auto_quality_fallback=self.auto_quality_fallback_var.get(),
+                # Image optimization
                 optimize_images=self.optimize_images_var.get(),
                 image_quality=image_quality,
                 image_format=self.image_format_var.get(),
+                # Tables & formulas
                 enable_tables=self.improved_tables_var.get(),
                 enable_formulas=self.detect_formulas_var.get(),
+                # Service
                 cache_enabled=self.cache_enabled_var.get(),
                 validate_output=self.validate_output_var.get(),
                 verbose=self.verbose_var.get(),
-                # Callback (только progress)
+                # Progress
                 progress_callback=self.update_progress,
             )
 
             self.log_message("\n✅ Конвертация завершена успешно!")
             self.log_message(f"📚 Результат: {result_path}")
-            self.progress_label.configure(text="Готово!")
-            messagebox.showinfo("Успех", f"Файл создан:\n{result_path}")
+            self.after(0, lambda: self.progress_label.configure(text="Готово!"))
+            self.after(0, lambda: messagebox.showinfo("Успех", f"Файл создан:\n{result_path}"))
 
         except Exception as e:
             self.log_message(f"\n❌ Ошибка:\n{str(e)}")
-            self.progress_label.configure(text="Ошибка!")
-            messagebox.showerror("Ошибка", str(e))
+            self.after(0, lambda: self.progress_label.configure(text="Ошибка!"))
+            self.after(0, lambda: messagebox.showerror("Ошибка", str(e)))
 
         finally:
-            self.convert_btn.configure(state="normal")
+            self.after(0, lambda: self.convert_btn.configure(state="normal"))
 
 
 if __name__ == "__main__":

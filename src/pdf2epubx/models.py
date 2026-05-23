@@ -25,6 +25,7 @@ class TextSpan:
     size: float
     flags: int
     bbox: tuple[float, float, float, float]
+    color: int = 0  # RGB цвет как int (0x000000 = чёрный)
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@ from pdf2epubx.cleanup import detect_repeated_marginal_texts
 from pdf2epubx.edit_rules import is_toc_page, load_edit_rules
 from pdf2epubx.epub_writer import EpubWriter
 from pdf2epubx.extractor import PdfExtractor
-from pdf2epubx.ocr import run_ocrmypdf
+from pdf2epubx.ocr import run_ocrmypdf, run_builtin_ocr, get_best_ocr_method
 from pdf2epubx.pdf_inspector import inspect_pdf, median_font_size
 from pdf2epubx.profiles import get_profile, ProgrammingLanguage
 from pdf2epubx.renderer import HtmlRenderer
@@ -71,6 +71,9 @@ def convert_pdf_to_epub(
     # Параметры нового функционала
     enable_tables: bool = True,
     enable_formulas: bool = True,
+    # Robustness / Scan support
+    normalize_scan_bold: bool = True,
+    auto_quality_fallback: bool = True,
     # Callback для прогресса: func(current_step: int, total_steps: int, message: str)
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Path:
@@ -112,6 +115,10 @@ def convert_pdf_to_epub(
 
         pdf_stats = inspect_pdf(input_pdf)
         working_pdf = input_pdf
+        
+        logger.info(f"Страниц: {pdf_stats.page_count}, "
+                     f"Скан: {pdf_stats.looks_scanned}, "
+                     f"Качество текста: {pdf_stats.text_quality_score:.2f}")
 
         # OCR
         should_ocr = False
@@ -123,12 +130,32 @@ def convert_pdf_to_epub(
         if should_ocr:
             report_progress(3, 10, "Запуск OCR (это может занять время)...")
             logger.info("Запуск OCR...")
-            working_pdf = run_ocrmypdf(
-                input_pdf=input_pdf,
-                output_dir=tmp_dir,
-                ocr_language=ocr_language,
-            )
-            logger.info("OCR завершен")
+            
+            # Выбираем лучший доступный метод OCR
+            ocr_method = get_best_ocr_method()
+            logger.info(f"Метод OCR: {ocr_method}")
+            
+            try:
+                if ocr_method == "ocrmypdf":
+                    working_pdf = run_ocrmypdf(
+                        input_pdf=input_pdf,
+                        output_dir=tmp_dir,
+                        ocr_language=ocr_language,
+                    )
+                elif ocr_method == "builtin":
+                    working_pdf = run_builtin_ocr(
+                        input_pdf=input_pdf,
+                        output_dir=tmp_dir,
+                        ocr_language=ocr_language,
+                    )
+                else:
+                    logger.warning("OCR недоступен: ни ocrmypdf, ни Tesseract не найдены. "
+                                   "Продолжаем без OCR.")
+                    
+                logger.info("OCR завершен")
+            except Exception as ocr_err:
+                logger.warning(f"OCR не удался: {ocr_err}. Продолжаем без OCR.")
+                
             report_progress(4, 10, "OCR завершен, открытие документа...")
 
         doc = fitz.open(working_pdf)
@@ -155,10 +182,16 @@ def convert_pdf_to_epub(
                 image_format=image_format,
             )
 
+            # Определяем, нужна ли нормализация bold (для сканов)
+            effective_normalize_bold = normalize_scan_bold and (
+                pdf_stats.looks_scanned or pdf_stats.text_quality_score < 0.5
+            )
+
             extractor = PdfExtractor(
                 doc=doc,
                 edit_rules=edit_rules,
                 preserve_images=preserve_images,
+                normalize_scan_bold=effective_normalize_bold,
             )
 
             repeated_marginals = detect_repeated_marginal_texts(doc) if profile.remove_headers_footers else set()
@@ -174,12 +207,6 @@ def convert_pdf_to_epub(
             table_parser = TableParser() if (enable_tables and HAS_TABLES) else None
             formula_detector = FormulaDetector() if (enable_formulas and HAS_FORMULAS) else None
             
-            # Передаем парсеры в рендерер (если ваш HtmlRenderer поддерживает их через kwargs или нужно модифицировать renderer)
-            # В данном примере предполагаем, что renderer использует глобальные настройки или мы передадим их явно, 
-            # если сигнатура HtmlRenderer позволяет. Если нет - можно расширить класс renderer.
-            # Для совместимости передадим их в контекст или используем напрямую в цикле, если renderer не обновлен.
-            # Здесь мы предполагаем, что renderer уже обновлен или мы обрабатываем текст до рендеринга.
-            
             renderer = HtmlRenderer(
                 profile=profile,
                 writer=writer,
@@ -190,9 +217,7 @@ def convert_pdf_to_epub(
                 skip_printed_toc=skip_printed_toc,
                 aggressive_level=aggressive_level,
                 preserve_figure_references=preserve_figure_references,
-                # Добавьте эти аргументы в __init__ HtmlRenderer, если нужно:
-                # table_parser=table_parser,
-                # formula_detector=formula_detector,
+                auto_quality_fallback=auto_quality_fallback,
             )
 
             effective_split_by_outline = profile.split_by_outline if split_by_outline is None else split_by_outline
@@ -209,6 +234,9 @@ def convert_pdf_to_epub(
 
             logger.set_total_chapters(len(chapter_plan))
             total_chapters = len(chapter_plan)
+            
+            # Счётчик проблемных страниц
+            failed_pages: list[tuple[int, str]] = []
 
             for chapter_index, chapter in enumerate(chapter_plan, start=1):
                 # Расчет прогресса: от 60% до 90%
@@ -231,30 +259,35 @@ def convert_pdf_to_epub(
                             chapter_body_parts.append(toc_html)
                             continue
 
-                    page_content = extractor.extract_page(page_index)
-                    classified_blocks = classifier.classify_page(page_content)
+                    # ── Per-page try/except: одна битая страница НЕ валит конвертацию ──
+                    try:
+                        page_content = extractor.extract_page(page_index)
+                        classified_blocks = classifier.classify_page(page_content)
 
-                    # --- ЗДЕСЬ ИНТЕГРАЦИЯ НОВЫХ МОДУЛЕЙ ---
-                    # Если HtmlRenderer не обновлен для приема парсеров, можно обработать текст здесь
-                    # Но лучше передать их в renderer. Для примера оставим вызов renderer как есть,
-                    # предполагая, что вы обновите HtmlRenderer или передадите парсеры туда.
-                    
-                    # Пример ручной обработки (если renderer не умеет):
-                    # raw_html = renderer.render_page(...)
-                    # if formula_detector: raw_html = formula_detector.process_html(raw_html)
-                    
-                    page_html = renderer.render_page(
-                        pdf_page=pdf_page,
-                        page=page_content,
-                        blocks=classified_blocks,
-                    )
-                    
-                    # Если renderer не обрабатывает таблицы/формулы внутри, раскомментируйте и адаптируйте:
-                    # if table_parser: page_html = table_parser.post_process(page_html)
-                    # if formula_detector: page_html = formula_detector.post_process(page_html)
+                        page_html = renderer.render_page(
+                            pdf_page=pdf_page,
+                            page=page_content,
+                            blocks=classified_blocks,
+                        )
 
-                    chapter_body_parts.append(page_html)
-                    logger.page_processed(page_number, chapter_index)
+                        chapter_body_parts.append(page_html)
+                        logger.page_processed(page_number, chapter_index)
+
+                    except Exception as page_err:
+                        error_msg = f"Ошибка на странице {page_number}: {str(page_err)}"
+                        logger.warning(error_msg)
+                        failed_pages.append((page_number, str(page_err)))
+
+                        # Fallback: рендерим страницу как изображение
+                        try:
+                            fallback_html = renderer.render_pdf_page_as_facsimile(pdf_page, page_number)
+                            chapter_body_parts.append(fallback_html)
+                            logger.info(f"Страница {page_number}: использован fallback (изображение)")
+                        except Exception as fallback_err:
+                            logger.error(f"Не удалось создать fallback для страницы {page_number}: {fallback_err}")
+                            chapter_body_parts.append(
+                                f'<p class="error-page">[Страница {page_number} не может быть отображена]</p>'
+                            )
 
                 file_name_fragment = safe_filename_fragment(chapter.title)
                 chapter_file_name = f"chapters/chapter_{chapter_index:04d}_{file_name_fragment}.xhtml"
@@ -270,6 +303,21 @@ def convert_pdf_to_epub(
             report_progress(9, 10, "Сборка EPUB файла...")
             writer.write(output_epub)
             logger.info(f"EPUB сохранен: {output_epub}")
+
+            # Логируем статистику quality
+            quality_summary = renderer.get_quality_summary()
+            if quality_summary.get("total_scored", 0) > 0:
+                logger.info(
+                    f"Quality: avg={quality_summary['avg_score']:.2f}, "
+                    f"text={quality_summary['text_pages']}, "
+                    f"hybrid={quality_summary['hybrid_pages']}, "
+                    f"facsimile={quality_summary['facsimile_pages']}"
+                )
+
+            if failed_pages:
+                logger.warning(f"Проблемных страниц: {len(failed_pages)}")
+                for pn, err in failed_pages[:5]:
+                    logger.warning(f"  Стр. {pn}: {err}")
 
             if validate_output:
                 report_progress(9, 10, "Валидация EPUB...")

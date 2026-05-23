@@ -1,4 +1,5 @@
 LICENSE
+MANIFEST.in
 README.md
 pyproject.toml
 src/pdf2epubx/__init__.py
@@ -23,6 +24,12 @@ src/pdf2epubx/pdf_inspector.py
 src/pdf2epubx/preflight.py
 src/pdf2epubx/profiles.py
 src/pdf2epubx/renderer.py
+src/pdf2epubx/rules.conservative.json
+src/pdf2epubx/rules.default-tech.json
+src/pdf2epubx/rules.example.json
+src/pdf2epubx/rules.generic.json
+src/pdf2epubx/rules.headercheck.json
+src/pdf2epubx/rules.universal.json
 src/pdf2epubx/table_parser.py
 src/pdf2epubx/toc_parser.py
 src/pdf2epubx/utils.py

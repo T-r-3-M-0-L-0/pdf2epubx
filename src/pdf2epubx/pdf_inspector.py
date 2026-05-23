@@ -14,26 +14,54 @@ class PdfStats:
     total_sampled_text_chars: int
     average_text_chars_per_sampled_page: float
     looks_scanned: bool
+    text_quality_score: float = 1.0  # 0.0 (мусор) — 1.0 (чистый текст)
 
 
 def inspect_pdf(
     input_pdf: Path,
-    sample_pages: int = 12,
+    sample_pages: int = 20,
     scanned_threshold_chars_per_page: int = 25,
 ) -> PdfStats:
+    """
+    Анализирует PDF, сканируя страницы РАВНОМЕРНО по документу
+    (а не только первые N, которые могут быть обложкой/оглавлением).
+    """
     doc = fitz.open(input_pdf)
 
     try:
         page_count = len(doc)
         sampled = min(page_count, sample_pages)
-        total_chars = 0
 
-        for page_index in range(sampled):
+        # Выбираем страницы равномерно по документу
+        if sampled >= page_count:
+            indices = list(range(page_count))
+        else:
+            step = page_count / sampled
+            indices = [int(i * step) for i in range(sampled)]
+            # Убираем дубликаты и добавляем последнюю страницу
+            indices = sorted(set(indices))
+            sampled = len(indices)
+
+        total_chars = 0
+        good_chars_total = 0
+        total_chars_total = 0
+
+        for page_index in indices:
             text = doc[page_index].get_text("text") or ""
-            total_chars += len(text.strip())
+            stripped = text.strip()
+            total_chars += len(stripped)
+
+            # Оценка качества текста
+            for c in stripped:
+                total_chars_total += 1
+                if c.isalpha() or c.isdigit() or c in " .,;:!?-–—()[]{}\"'«»\n\t":
+                    good_chars_total += 1
 
         average = total_chars / sampled if sampled else 0.0
         looks_scanned = sampled > 0 and average < scanned_threshold_chars_per_page
+
+        # Качество текста: доля хороших символов
+        quality = good_chars_total / max(total_chars_total, 1) if total_chars_total > 0 else 0.0
 
         return PdfStats(
             page_count=page_count,
@@ -41,6 +69,7 @@ def inspect_pdf(
             total_sampled_text_chars=total_chars,
             average_text_chars_per_sampled_page=average,
             looks_scanned=looks_scanned,
+            text_quality_score=quality,
         )
     finally:
         doc.close()
