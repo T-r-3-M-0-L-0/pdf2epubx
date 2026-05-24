@@ -17,12 +17,15 @@ src/pdf2epubx/extractor.py
 src/pdf2epubx/formula_detector.py
 src/pdf2epubx/gui.py
 src/pdf2epubx/image_optimizer.py
+src/pdf2epubx/image_preprocessor.py
+src/pdf2epubx/layoutlm_processor.py
 src/pdf2epubx/logger.py
 src/pdf2epubx/models.py
 src/pdf2epubx/ocr.py
 src/pdf2epubx/pdf_inspector.py
 src/pdf2epubx/preflight.py
 src/pdf2epubx/profiles.py
+src/pdf2epubx/quality_scorer.py
 src/pdf2epubx/renderer.py
 src/pdf2epubx/rules.conservative.json
 src/pdf2epubx/rules.default-tech.json
@@ -31,6 +34,7 @@ src/pdf2epubx/rules.generic.json
 src/pdf2epubx/rules.headercheck.json
 src/pdf2epubx/rules.universal.json
 src/pdf2epubx/table_parser.py
+src/pdf2epubx/text_repair.py
 src/pdf2epubx/toc_parser.py
 src/pdf2epubx/utils.py
 src/pdf2epubx.egg-info/PKG-INFO

@@ -5,7 +5,10 @@ import threading
 from tkinter import filedialog, messagebox
 
 from pdf2epubx.converter import convert_pdf_to_epub
+from pdf2epubx.multiprocessing_converter import convert_pdf_to_epub_parallel
 from pdf2epubx.ocr import is_ocr_available
+from pdf2epubx.layoutlm_processor import HAS_LAYOUTLM
+from pdf2epubx.image_preprocessor import HAS_OPENCV
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -46,7 +49,7 @@ class Pdf2EpubGUI(ctk.CTk):
         # Профиль
         ctk.CTkLabel(left, text="⚙️ Профиль", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
         self.profile_var = ctk.StringVar(value="technical")
-        self.profile_menu = ctk.CTkOptionMenu(left, values=["novel", "technical", "programming", "hybrid", "facsimile"],
+        self.profile_menu = ctk.CTkOptionMenu(left, values=["novel", "technical", "academic", "manga", "newspaper", "hybrid", "facsimile", "programming"],
                                               variable=self.profile_var, command=self.update_programming_options)
         self.profile_menu.pack(pady=4, padx=pad, anchor="w")
 
@@ -91,6 +94,101 @@ class Pdf2EpubGUI(ctk.CTk):
                         variable=self.auto_quality_fallback_var).pack(anchor="w", padx=pad, pady=2)
         ctk.CTkLabel(left, text="    Плохие страницы → изображение, средние → hybrid",
                      font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w", padx=pad)
+
+        # ═══════════════════════════════════════════════
+        # НОВЫЙ БЛОК: Производительность (Multiprocessing)
+        # ═══════════════════════════════════════════════
+        ctk.CTkLabel(left, text="⚡ Производительность", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
+
+        self.use_multiprocessing_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(left, text="Включить многопроцессорную обработку",
+                        variable=self.use_multiprocessing_var).pack(anchor="w", padx=pad, pady=2)
+        ctk.CTkLabel(left, text="    Ускорение в 3-8 раз на многоядерных CPU",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w", padx=pad)
+
+        mp_frame = ctk.CTkFrame(left)
+        mp_frame.pack(fill="x", padx=pad, pady=4)
+        ctk.CTkLabel(mp_frame, text="Workers:").pack(side="left", padx=5)
+        self.num_workers_var = ctk.StringVar(value="Auto")
+        self.workers_menu = ctk.CTkOptionMenu(mp_frame, values=["Auto", "1", "2", "4", "8", "16"],
+                                              variable=self.num_workers_var, width=80)
+        self.workers_menu.pack(side="left", padx=5)
+        ctk.CTkLabel(mp_frame, text="Chunk:").pack(side="left", padx=(15, 5))
+        self.chunk_size_var = ctk.StringVar(value="5")
+        ctk.CTkEntry(mp_frame, textvariable=self.chunk_size_var, width=60).pack(side="left", padx=5)
+
+        # ═══════════════════════════════════════════════
+        # НОВЫЙ БЛОК: ML-улучшения (LayoutLM)
+        # ═══════════════════════════════════════════════
+        ctk.CTkLabel(left, text="🤖 ML-улучшения (LayoutLM)", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
+
+        ml_status_text = "✅ Доступно" if HAS_LAYOUTLM else "❌ Недоступно (pip install transformers torch)"
+        ctk.CTkLabel(left, text=f"    Статус: {ml_status_text}",
+                     font=ctk.CTkFont(size=11), text_color="gray" if not HAS_LAYOUTLM else "green").pack(anchor="w", padx=pad)
+
+        self.use_layoutlm_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(left, text="Использовать LayoutLM для структуры",
+                        variable=self.use_layoutlm_var, state="normal" if HAS_LAYOUTLM else "disabled").pack(anchor="w", padx=pad, pady=2)
+
+        llm_frame = ctk.CTkFrame(left)
+        llm_frame.pack(fill="x", padx=pad, pady=4)
+        ctk.CTkLabel(llm_frame, text="Модель:").pack(side="left", padx=5)
+        self.layoutlm_model_var = ctk.StringVar(value="layoutlm")
+        self.llm_model_menu = ctk.CTkOptionMenu(llm_frame, values=["layoutlm", "doclaynet"],
+                                                variable=self.layoutlm_model_var, width=120,
+                                                state="normal" if HAS_LAYOUTLM else "disabled")
+        self.llm_model_menu.pack(side="left", padx=5)
+        ctk.CTkLabel(llm_frame, text="Device:").pack(side="left", padx=(15, 5))
+        self.layoutlm_device_var = ctk.StringVar(value="cpu")
+        self.llm_device_menu = ctk.CTkOptionMenu(llm_frame, values=["cpu", "cuda"],
+                                                 variable=self.layoutlm_device_var, width=80,
+                                                 state="normal" if HAS_LAYOUTLM else "disabled")
+        self.llm_device_menu.pack(side="left", padx=5)
+
+        ctk.CTkLabel(left, text="Порог уверенности:", font=ctk.CTkFont(size=11)).pack(anchor="w", padx=pad, pady=(4, 0))
+        self.confidence_threshold_var = ctk.StringVar(value="0.7")
+        conf_frame = ctk.CTkFrame(left)
+        conf_frame.pack(fill="x", padx=pad, pady=4)
+        ctk.CTkEntry(conf_frame, textvariable=self.confidence_threshold_var, width=80).pack(side="left", padx=5)
+        ctk.CTkLabel(conf_frame, text="(0.5 - 0.95)", font=ctk.CTkFont(size=10), text_color="gray").pack(side="left", padx=5)
+
+        # ═══════════════════════════════════════════════
+        # НОВЫЙ БЛОК: Предобработка изображений
+        # ═══════════════════════════════════════════════
+        ctk.CTkLabel(left, text="🖼️ Предобработка изображений", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=pad, pady=(pad, 4))
+
+        img_prep_status = "✅ OpenCV доступен" if HAS_OPENCV else "❌ OpenCV недоступен (pip install opencv-python numpy)"
+        ctk.CTkLabel(left, text=f"    Статус: {img_prep_status}",
+                     font=ctk.CTkFont(size=11), text_color="gray" if not HAS_OPENCV else "green").pack(anchor="w", padx=pad)
+
+        self.use_image_preprocessing_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(left, text="Включить предобработку для OCR",
+                        variable=self.use_image_preprocessing_var, state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=2)
+
+        ip_frame = ctk.CTkFrame(left)
+        ip_frame.pack(fill="x", padx=pad, pady=4)
+        ctk.CTkLabel(ip_frame, text="Режим:").pack(side="left", padx=5)
+        self.image_prep_mode_var = ctk.StringVar(value="balanced")
+        self.ip_mode_menu = ctk.CTkOptionMenu(ip_frame, values=["speed", "balanced", "quality"],
+                                              variable=self.image_prep_mode_var, width=100,
+                                              state="normal" if HAS_OPENCV else "disabled")
+        self.ip_mode_menu.pack(side="left", padx=5)
+
+        self.ip_deskew_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(left, text="Deskew (выпрямление)", variable=self.ip_deskew_var,
+                        state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=1)
+        self.ip_denoise_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(left, text="Denoise (шумоподавление)", variable=self.ip_denoise_var,
+                        state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=1)
+        self.ip_enhance_contrast_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(left, text="Enhance Contrast (CLAHE)", variable=self.ip_enhance_contrast_var,
+                        state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=1)
+        self.ip_binarize_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(left, text="Binarize (Otsu)", variable=self.ip_binarize_var,
+                        state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=1)
+        self.ip_remove_borders_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(left, text="Remove Borders", variable=self.ip_remove_borders_var,
+                        state="normal" if HAS_OPENCV else "disabled").pack(anchor="w", padx=pad, pady=1)
 
         # ═══════════════════════════════════════════════
         # НОВЫЙ БЛОК: OCR
@@ -230,38 +328,116 @@ class Pdf2EpubGUI(ctk.CTk):
         self.log_message(f"🔗 Ссылки на рисунки: {'сохраняются' if self.preserve_figure_references_var.get() else 'очищаются'}")
         self.log_message(f"🔍 Bold-нормализация: {'вкл' if self.normalize_scan_bold_var.get() else 'выкл'}")
         self.log_message(f"🔍 Авто-fallback: {'вкл' if self.auto_quality_fallback_var.get() else 'выкл'}")
+
+        # Multiprocessing
+        use_mp = self.use_multiprocessing_var.get()
+        self.log_message(f"⚡ Multiprocessing: {'вкл' if use_mp else 'выкл'}")
+        if use_mp:
+            workers = self.num_workers_var.get()
+            chunk = self.chunk_size_var.get()
+            self.log_message(f"   Workers: {workers}, Chunk: {chunk}")
+
+        # LayoutLM
+        use_llm = self.use_layoutlm_var.get()
+        self.log_message(f"🤖 LayoutLM: {'вкл' if use_llm else 'выкл'}")
+        if use_llm:
+            llm_model = self.layoutlm_model_var.get()
+            llm_device = self.layoutlm_device_var.get()
+            llm_conf = self.confidence_threshold_var.get()
+            self.log_message(f"   Модель: {llm_model}, Device: {llm_device}, Confidence: {llm_conf}")
+
+        # Image Preprocessing
+        use_ip = self.use_image_preprocessing_var.get()
+        self.log_message(f"🖼️ Предобработка изображений: {'вкл' if use_ip else 'выкл'}")
+        if use_ip:
+            ip_mode = self.image_prep_mode_var.get()
+            ip_opts = []
+            if self.ip_deskew_var.get(): ip_opts.append("deskew")
+            if self.ip_denoise_var.get(): ip_opts.append("denoise")
+            if self.ip_enhance_contrast_var.get(): ip_opts.append("enhance")
+            if self.ip_binarize_var.get(): ip_opts.append("binarize")
+            if self.ip_remove_borders_var.get(): ip_opts.append("borders")
+            self.log_message(f"   Режим: {ip_mode}, Опции: {', '.join(ip_opts) if ip_opts else 'default'}")
+
         self.log_message(f"📷 OCR: {self.ocr_mode_var.get()} ({self.ocr_language_var.get()})")
         self.log_message("-" * 50)
 
         try:
-            result_path = convert_pdf_to_epub(
-                input_pdf=input_path,
-                output_epub=output_path,
-                profile_name=self.profile_var.get(),
-                aggressive_level=aggressive_level,
-                preserve_images=self.preserve_images_var.get(),
-                preserve_figure_references=self.preserve_figure_references_var.get(),
-                programming_language=self.programming_lang_var.get() if self.profile_var.get() == "programming" else "General",
-                # OCR
-                ocr_mode=self.ocr_mode_var.get(),
-                ocr_language=self.ocr_language_var.get(),
-                # Scan handling
-                normalize_scan_bold=self.normalize_scan_bold_var.get(),
-                auto_quality_fallback=self.auto_quality_fallback_var.get(),
-                # Image optimization
-                optimize_images=self.optimize_images_var.get(),
-                image_quality=image_quality,
-                image_format=self.image_format_var.get(),
-                # Tables & formulas
-                enable_tables=self.improved_tables_var.get(),
-                enable_formulas=self.detect_formulas_var.get(),
-                # Service
-                cache_enabled=self.cache_enabled_var.get(),
-                validate_output=self.validate_output_var.get(),
-                verbose=self.verbose_var.get(),
-                # Progress
-                progress_callback=self.update_progress,
-            )
+            # Определяем num_workers для multiprocessing
+            num_workers = None
+            if self.num_workers_var.get() != "Auto":
+                num_workers = int(self.num_workers_var.get())
+
+            try:
+                chunk_size = int(self.chunk_size_var.get())
+            except ValueError:
+                chunk_size = 5
+
+            try:
+                confidence_threshold = float(self.confidence_threshold_var.get())
+            except ValueError:
+                confidence_threshold = 0.7
+
+            # Выбираем режим конвертации: multiprocessing или обычный
+            if use_mp:
+                result_path = convert_pdf_to_epub_parallel(
+                    input_pdf=input_path,
+                    output_epub=output_path,
+                    profile_name=self.profile_var.get(),
+                    aggressive_level=aggressive_level,
+                    preserve_images=self.preserve_images_var.get(),
+                    programming_language=self.programming_lang_var.get() if self.profile_var.get() == "programming" else "General",
+                    num_workers=num_workers,
+                    chunk_size=chunk_size,
+                    # Scan handling
+                    normalize_scan_bold=self.normalize_scan_bold_var.get(),
+                    auto_quality_fallback=self.auto_quality_fallback_var.get(),
+                    # Image preprocessing
+                    enable_image_preprocessing=self.use_image_preprocessing_var.get(),
+                    image_prep_mode=self.image_prep_mode_var.get(),
+                    # OCR
+                    ocr_mode=self.ocr_mode_var.get(),
+                    ocr_language=self.ocr_language_var.get(),
+                    # Progress
+                    progress_callback=self.update_progress,
+                )
+            else:
+                result_path = convert_pdf_to_epub(
+                    input_pdf=input_path,
+                    output_epub=output_path,
+                    profile_name=self.profile_var.get(),
+                    aggressive_level=aggressive_level,
+                    preserve_images=self.preserve_images_var.get(),
+                    preserve_figure_references=self.preserve_figure_references_var.get(),
+                    programming_language=self.programming_lang_var.get() if self.profile_var.get() == "programming" else "General",
+                    # OCR
+                    ocr_mode=self.ocr_mode_var.get(),
+                    ocr_language=self.ocr_language_var.get(),
+                    # Scan handling
+                    normalize_scan_bold=self.normalize_scan_bold_var.get(),
+                    auto_quality_fallback=self.auto_quality_fallback_var.get(),
+                    # Image optimization
+                    optimize_images=self.optimize_images_var.get(),
+                    image_quality=image_quality,
+                    image_format=self.image_format_var.get(),
+                    # Tables & formulas
+                    enable_tables=self.improved_tables_var.get(),
+                    enable_formulas=self.detect_formulas_var.get(),
+                    # Image preprocessing (NEW)
+                    enable_image_preprocessing=self.use_image_preprocessing_var.get(),
+                    image_prep_mode=self.image_prep_mode_var.get(),
+                    # LayoutLM (NEW)
+                    enable_layoutlm=self.use_layoutlm_var.get(),
+                    layoutlm_model=self.layoutlm_model_var.get(),
+                    layoutlm_device=self.layoutlm_device_var.get(),
+                    layoutlm_confidence=confidence_threshold,
+                    # Service
+                    cache_enabled=self.cache_enabled_var.get(),
+                    validate_output=self.validate_output_var.get(),
+                    verbose=self.verbose_var.get(),
+                    # Progress
+                    progress_callback=self.update_progress,
+                )
 
             self.log_message("\n✅ Конвертация завершена успешно!")
             self.log_message(f"📚 Результат: {result_path}")
@@ -278,5 +454,7 @@ class Pdf2EpubGUI(ctk.CTk):
 
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+    freeze_support()  # Обязательно для Windows PyInstaller с multiprocessing
     app = Pdf2EpubGUI()
     app.mainloop()

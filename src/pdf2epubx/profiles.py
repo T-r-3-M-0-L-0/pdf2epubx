@@ -6,6 +6,7 @@ from typing import Literal
 
 TableMode = Literal["text", "image", "hybrid"]
 ProgrammingLanguage = Literal["General", "Python", "Java", "Golang", "C++", "C#", "C", "PowerShell", "Bash"]
+BookType = Literal["novel", "technical", "academic", "manga", "newspaper", "facsimile", "hybrid", "programming"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,13 @@ class ConversionProfile:
 
     fallback_render_empty_pages: bool
     fallback_render_low_confidence_pages: bool
+
+    # Новые параметры для расширенных профилей
+    preserve_layout: bool = False  # Для manga/newspaper - сохранять точное расположение
+    multi_column_detection: bool = False  # Для academic/newspaper
+    formula_detection: bool = True  # Для academic/technical
+    ocr_priority: str = "quality"  # "quality" | "speed" - приоритет OCR
+    image_preprocessing: bool = False  # Предобработка изображений (deskew, denoise)
 
     programming_language: ProgrammingLanguage = "General"
 
@@ -63,6 +71,66 @@ PROFILES: dict[str, ConversionProfile] = {
         split_by_outline=True,
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
+        formula_detection=True,
+    ),
+    "academic": ConversionProfile(
+        name="academic",
+        description="Scientific papers, textbooks, research articles with formulas and citations.",
+        force_facsimile=False,
+        preserve_images=True,
+        preserve_code_blocks=False,
+        detect_tables=True,
+        table_mode="hybrid",
+        join_paragraph_lines=True,
+        aggressive_paragraph_joining=False,
+        remove_headers_footers=True,
+        detect_headings=True,
+        split_by_outline=True,
+        fallback_render_empty_pages=True,
+        fallback_render_low_confidence_pages=True,
+        multi_column_detection=True,
+        formula_detection=True,
+        ocr_priority="quality",
+        image_preprocessing=True,
+    ),
+    "manga": ConversionProfile(
+        name="manga",
+        description="Manga, comics, graphic novels - image-heavy content with speech bubbles.",
+        force_facsimile=True,
+        preserve_images=True,
+        preserve_code_blocks=False,
+        detect_tables=False,
+        table_mode="image",
+        join_paragraph_lines=False,
+        aggressive_paragraph_joining=False,
+        remove_headers_footers=False,
+        detect_headings=False,
+        split_by_outline=False,
+        fallback_render_empty_pages=True,
+        fallback_render_low_confidence_pages=True,
+        preserve_layout=True,
+        ocr_priority="speed",
+        image_preprocessing=True,
+    ),
+    "newspaper": ConversionProfile(
+        name="newspaper",
+        description="Newspapers, magazines - multi-column layouts with mixed content.",
+        force_facsimile=False,
+        preserve_images=True,
+        preserve_code_blocks=False,
+        detect_tables=True,
+        table_mode="hybrid",
+        join_paragraph_lines=True,
+        aggressive_paragraph_joining=False,
+        remove_headers_footers=True,
+        detect_headings=True,
+        split_by_outline=False,
+        fallback_render_empty_pages=True,
+        fallback_render_low_confidence_pages=True,
+        multi_column_detection=True,
+        preserve_layout=True,
+        ocr_priority="quality",
+        image_preprocessing=True,
     ),
     "facsimile": ConversionProfile(
         name="facsimile",
@@ -79,6 +147,7 @@ PROFILES: dict[str, ConversionProfile] = {
         split_by_outline=False,
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
+        preserve_layout=True,
     ),
     "hybrid": ConversionProfile(
         name="hybrid",
@@ -95,6 +164,7 @@ PROFILES: dict[str, ConversionProfile] = {
         split_by_outline=True,
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
+        formula_detection=True,
     ),
     "programming": ConversionProfile(
         name="programming",
@@ -112,6 +182,7 @@ PROFILES: dict[str, ConversionProfile] = {
         fallback_render_empty_pages=True,
         fallback_render_low_confidence_pages=True,
         programming_language="General",
+        formula_detection=False,
     ),
 }
 

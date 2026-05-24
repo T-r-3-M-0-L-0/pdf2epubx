@@ -7,22 +7,62 @@ import tempfile
 
 import fitz
 
+# Проверяем доступность ocrmypdf как Python-пакета
+try:
+    import ocrmypdf as _ocrmypdf_module
+    _HAS_OCRMYPDF_PACKAGE = True
+except ImportError:
+    _HAS_OCRMYPDF_PACKAGE = False
+
 
 def run_ocrmypdf(
     input_pdf: Path,
     output_dir: Path,
     ocr_language: str,
 ) -> Path:
-    """OCR через внешний ocrmypdf (Tesseract)."""
+    """
+    OCR через ocrmypdf.
+
+    Приоритет:
+    1. Python API (import ocrmypdf) — надёжнее, не зависит от PATH
+    2. CLI (subprocess) — fallback, если пакет не установлен
+    """
+    output_pdf = output_dir / f"{input_pdf.stem}.ocr.pdf"
+
+    # Способ 1: Python API (приоритетный)
+    if _HAS_OCRMYPDF_PACKAGE:
+        try:
+            _ocrmypdf_module.ocr(
+                input_file=str(input_pdf),
+                output_file=str(output_pdf),
+                language=ocr_language.replace("+", "+"),  # ocrmypdf использует "+" как разделитель
+                skip_text=True,
+                deskew=True,
+                rotate_pages=True,
+                clean=True,
+                progress_bar=False,
+            )
+            return output_pdf
+        except Exception as api_err:
+            # Если Python API не сработал — пробуем CLI
+            pass
+
+    # Способ 2: CLI (fallback)
     executable = shutil.which("ocrmypdf")
 
     if executable is None:
+        if _HAS_OCRMYPDF_PACKAGE:
+            raise RuntimeError(
+                f"ocrmypdf Python API вернул ошибку. "
+                "Убедитесь, что Tesseract и Ghostscript установлены:\n"
+                "  - Tesseract: https://github.com/UB-Mannheim/tesseract/wiki\n"
+                "  - Ghostscript: https://www.ghostscript.com/releases/gsdnld.html"
+            )
         raise RuntimeError(
             "OCR was requested, but OCRmyPDF was not found. "
-            "Install OCRmyPDF and Tesseract, then run the command again."
+            "Install: pip install ocrmypdf\n"
+            "Also install Tesseract and Ghostscript."
         )
-
-    output_pdf = output_dir / f"{input_pdf.stem}.ocr.pdf"
 
     command = [
         executable,
@@ -123,10 +163,15 @@ def is_ocr_available() -> dict[str, bool]:
     """
     Проверяет доступность OCR-движков.
 
+    Проверяет:
+    - ocrmypdf: Python-пакет ИЛИ CLI-утилита в PATH
+    - tesseract: CLI-утилита в PATH (нужна для обоих методов)
+
     Returns:
         Словарь {'ocrmypdf': bool, 'tesseract': bool, 'builtin': bool}
     """
-    ocrmypdf_available = shutil.which("ocrmypdf") is not None
+    # ocrmypdf: проверяем и Python-пакет, и CLI
+    ocrmypdf_available = _HAS_OCRMYPDF_PACKAGE or (shutil.which("ocrmypdf") is not None)
     tesseract_available = shutil.which("tesseract") is not None
 
     return {
@@ -139,6 +184,8 @@ def is_ocr_available() -> dict[str, bool]:
 def get_best_ocr_method() -> str:
     """
     Определяет лучший доступный метод OCR.
+
+    Приоритет: ocrmypdf (лучшее качество) → builtin (Tesseract через PyMuPDF) → none.
 
     Returns:
         'ocrmypdf', 'builtin' или 'none'

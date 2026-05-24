@@ -25,11 +25,13 @@ class PdfExtractor:
         edit_rules: EditRules,
         preserve_images: bool = True,
         normalize_scan_bold: bool = False,
+        image_preprocessor: object | None = None,
     ) -> None:
         self.doc = doc
         self.edit_rules = edit_rules
         self.preserve_images = preserve_images
         self.normalize_scan_bold = normalize_scan_bold
+        self.image_preprocessor = image_preprocessor
 
         # Предварительный анализ bold-распределения для детекции сканов
         self._bold_normalization_cache: dict[int, bool] = {}
@@ -85,12 +87,22 @@ class PdfExtractor:
                         continue
 
                     if isinstance(image_bytes, bytes) and image_bytes:
+                        # Предобработка изображения (если включено)
+                        if self.image_preprocessor is not None:
+                            try:
+                                image_bytes = self.image_preprocessor.preprocess(image_bytes)
+                                normalized_ext = "png"  # после предобработки всегда PNG
+                            except Exception:
+                                pass  # при ошибке используем оригинал
+                        else:
+                            normalized_ext = image_ext
+
                         blocks.append(
                             RawBlock(
                                 kind="image",
                                 bbox=bbox,
                                 image_bytes=image_bytes,
-                                image_ext=image_ext,
+                                image_ext=normalized_ext if self.image_preprocessor else image_ext,
                             )
                         )
 

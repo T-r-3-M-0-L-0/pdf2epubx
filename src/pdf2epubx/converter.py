@@ -24,6 +24,7 @@ from pdf2epubx.utils import clean_metadata_value, html_escape, safe_filename_fra
 from pdf2epubx.cache import ConversionCache, compute_pdf_cache_key
 from pdf2epubx.logger import ConversionLogger, create_logger
 from pdf2epubx.epub_validator import validate_epub
+from pdf2epubx.models import ClassifiedBlock, PageContent
 
 # Импорты новых модулей (убедитесь, что они существуют)
 try:
@@ -37,6 +38,23 @@ try:
     HAS_FORMULAS = True
 except ImportError:
     HAS_FORMULAS = False
+
+try:
+    from pdf2epubx.image_preprocessor import ImagePreprocessor, preprocess_for_ocr, HAS_OPENCV
+    HAS_IMAGE_PREPROCESSING = HAS_OPENCV
+except ImportError:
+    HAS_IMAGE_PREPROCESSING = False
+
+try:
+    from pdf2epubx.layoutlm_processor import (
+        create_layout_processor,
+        LayoutLMProcessor,
+        LayoutBlock,
+        HAS_LAYOUTLM,
+    )
+    HAS_LAYOUTLM_AVAILABLE = HAS_LAYOUTLM
+except ImportError:
+    HAS_LAYOUTLM_AVAILABLE = False
 
 
 def convert_pdf_to_epub(
@@ -74,6 +92,14 @@ def convert_pdf_to_epub(
     # Robustness / Scan support
     normalize_scan_bold: bool = True,
     auto_quality_fallback: bool = True,
+    # Image preprocessing (требует opencv-python + numpy)
+    enable_image_preprocessing: bool = False,
+    image_prep_mode: str = "balanced",
+    # LayoutLM ML-классификация (требует transformers + torch)
+    enable_layoutlm: bool = False,
+    layoutlm_model: str = "layoutlm",
+    layoutlm_device: str = "cpu",
+    layoutlm_confidence: float = 0.7,
     # Callback для прогресса: func(current_step: int, total_steps: int, message: str)
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Path:
@@ -109,6 +135,39 @@ def convert_pdf_to_epub(
         logger.debug(f"Кэш-ключ: {cache_key[:16] if cache_key else 'none'}...")
 
     report_progress(2, 10, "Анализ структуры PDF...")
+
+    # Инициализация image preprocessor
+    image_preprocessor = None
+    if enable_image_preprocessing and HAS_IMAGE_PREPROCESSING:
+        image_preprocessor = ImagePreprocessor(
+            deskew=(image_prep_mode != "speed"),
+            denoise=(image_prep_mode != "speed"),
+            binarize=False,
+            enhance_contrast=True,
+            remove_borders=(image_prep_mode == "quality"),
+        )
+        logger.info(f"Image preprocessing: {image_prep_mode} mode")
+    elif enable_image_preprocessing and not HAS_IMAGE_PREPROCESSING:
+        logger.warning("Image preprocessing запрошен, но OpenCV/numpy недоступны")
+
+    # Инициализация LayoutLM
+    layout_processor = None
+    if enable_layoutlm and HAS_LAYOUTLM_AVAILABLE:
+        try:
+            layout_processor = create_layout_processor(
+                model_type=layoutlm_model,
+                device=layoutlm_device,
+                confidence_threshold=layoutlm_confidence,
+            )
+            if layout_processor:
+                logger.info(f"LayoutLM: {layoutlm_model} на {layoutlm_device}")
+            else:
+                logger.warning("LayoutLM: не удалось создать процессор")
+        except Exception as llm_err:
+            logger.warning(f"LayoutLM: ошибка инициализации: {llm_err}")
+            layout_processor = None
+    elif enable_layoutlm and not HAS_LAYOUTLM_AVAILABLE:
+        logger.warning("LayoutLM запрошен, но transformers/torch недоступны")
     
     with tempfile.TemporaryDirectory(prefix="pdf2epubx_") as tmp_dir_raw:
         tmp_dir = Path(tmp_dir_raw)
@@ -192,6 +251,7 @@ def convert_pdf_to_epub(
                 edit_rules=edit_rules,
                 preserve_images=preserve_images,
                 normalize_scan_bold=effective_normalize_bold,
+                image_preprocessor=image_preprocessor,
             )
 
             repeated_marginals = detect_repeated_marginal_texts(doc) if profile.remove_headers_footers else set()
@@ -263,6 +323,16 @@ def convert_pdf_to_epub(
                     try:
                         page_content = extractor.extract_page(page_index)
                         classified_blocks = classifier.classify_page(page_content)
+
+                        # LayoutLM: опционально улучшаем классификацию
+                        if layout_processor is not None:
+                            classified_blocks = _enhance_with_layoutlm(
+                                layout_processor=layout_processor,
+                                page_content=page_content,
+                                classified_blocks=classified_blocks,
+                                page_number=page_number,
+                                logger=logger,
+                            )
 
                         page_html = renderer.render_page(
                             pdf_page=pdf_page,
@@ -341,3 +411,139 @@ def convert_pdf_to_epub(
             raise
         finally:
             doc.close()
+
+
+def _enhance_with_layoutlm(
+    layout_processor: LayoutLMProcessor,
+    page_content: PageContent,
+    classified_blocks: list[ClassifiedBlock],
+    page_number: int,
+    logger: ConversionLogger,
+) -> list[ClassifiedBlock]:
+    """
+    Улучшает классификацию блоков с помощью LayoutLM.
+
+    Если ML-модель даёт результат с высокой уверенностью, она переопределяет
+    правила из rule-based классификатора. Иначе — оставляем исходную классификацию.
+    """
+    from pdf2epubx.models import ClassifiedBlock as CB
+
+    try:
+        # Собираем слова и bounding boxes из PageContent
+        words: list[str] = []
+        boxes: list[list[int]] = []
+
+        for block in page_content.blocks:
+            if block.kind != "text":
+                continue
+            for line in block.lines:
+                for span in line.spans:
+                    text = span.text.strip()
+                    if not text:
+                        continue
+                    # Нормализуем bbox к 0-1000 (формат LayoutLM)
+                    x0 = int(span.bbox[0] / page_content.width * 1000)
+                    y0 = int(span.bbox[1] / page_content.height * 1000)
+                    x1 = int(span.bbox[2] / page_content.width * 1000)
+                    y1 = int(span.bbox[3] / page_content.height * 1000)
+                    # Clamp
+                    x0, y0 = max(0, x0), max(0, y0)
+                    x1, y1 = min(1000, x1), min(1000, y1)
+
+                    for word in text.split():
+                        words.append(word)
+                        boxes.append([x0, y0, x1, y1])
+
+        if not words:
+            return classified_blocks
+
+        # Получаем ML-предсказания
+        full_text = " ".join(words)
+        layout_blocks = layout_processor.process_page(
+            text=full_text,
+            words=words,
+            boxes=boxes,
+            page_number=page_number,
+        )
+
+        if not layout_blocks:
+            return classified_blocks
+
+        # Маппинг LayoutLM labels → ClassifiedKind
+        label_to_kind = {
+            "title": "heading",
+            "text": "paragraph",
+            "list": "paragraph",
+            "table": "table",
+            "figure": "image",
+            "formula": "code",       # формулы рендерим как код
+            "header": "header",
+            "footer": "footer",
+            "caption": "caption",
+            "code": "code",
+            "other": "paragraph",
+        }
+
+        # Создаём карту: bbox → ML-label для быстрого поиска
+        ml_labels_by_area: list[tuple[tuple[float, float, float, float], str, float]] = []
+        for lb in layout_blocks:
+            ml_labels_by_area.append((lb.bbox, lb.label, lb.confidence))
+
+        # Для каждого classified блока проверяем, есть ли ML-предсказание
+        enhanced: list[CB] = []
+        for cb in classified_blocks:
+            # Ищем пересечение с ML-блоками
+            best_match = None
+            best_overlap = 0.0
+
+            for ml_bbox, ml_label, ml_conf in ml_labels_by_area:
+                overlap = _bbox_overlap(cb.raw.bbox, ml_bbox)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_match = (ml_label, ml_conf)
+
+            if best_match and best_overlap > 0.3:
+                ml_label, ml_conf = best_match
+                new_kind = label_to_kind.get(ml_label, cb.kind)
+
+                # Переопределяем только если ML уверен И результат отличается
+                if new_kind != cb.kind and ml_conf > 0.75:
+                    enhanced.append(CB(
+                        raw=cb.raw,
+                        kind=new_kind,
+                        level=1 if new_kind == "heading" else cb.level,
+                        reason=f"LayoutLM: {ml_label} (conf={ml_conf:.2f})",
+                    ))
+                    continue
+
+            enhanced.append(cb)
+
+        return enhanced
+
+    except Exception as e:
+        logger.warning(f"LayoutLM: ошибка обработки стр. {page_number}: {e}")
+        return classified_blocks
+
+
+def _bbox_overlap(
+    bbox1: tuple[float, float, float, float],
+    bbox2: tuple[float, float, float, float],
+) -> float:
+    """Вычисляет IoU (пересечение / объединение) двух bounding boxes."""
+    x0 = max(bbox1[0], bbox2[0])
+    y0 = max(bbox1[1], bbox2[1])
+    x1 = min(bbox1[2], bbox2[2])
+    y1 = min(bbox1[3], bbox2[3])
+
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+
+    intersection = (x1 - x0) * (y1 - y0)
+    area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+    union = area1 + area2 - intersection
+
+    if union <= 0:
+        return 0.0
+
+    return intersection / union

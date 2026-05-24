@@ -51,7 +51,7 @@ a = Analysis(
         # Все модули pdf2epubx
         *pdf2epubx_hidden,
 
-        # Явно указываем новые модули
+        # Явно указываем все модули pdf2epubx
         'pdf2epubx.table_parser',
         'pdf2epubx.image_optimizer',
         'pdf2epubx.formula_detector',
@@ -74,9 +74,25 @@ a = Analysis(
         'pdf2epubx.edit_rules',
         'pdf2epubx.models',
         'pdf2epubx.utils',
+        # Новые модули (добавлены Qwen Coder)
+        'pdf2epubx.image_preprocessor',
+        'pdf2epubx.layoutlm_processor',
+        'pdf2epubx.multiprocessing_converter',
 
         # Зависимости для OCR (если используется)
         'pytesseract',
+
+        # OpenCV и numpy (для image_preprocessor)
+        'cv2',
+        'numpy',
+
+        # ML зависимости (для layoutlm_processor)
+        'transformers',
+        'torch',
+
+        # Multiprocessing (для Windows freeze_support)
+        'multiprocessing',
+        'concurrent.futures',
 
         # Утилиты
         'typing_extensions',
@@ -98,7 +114,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         'matplotlib',
-        'numpy',
+        # НЕ исключаем numpy — он нужен для image_preprocessor и torch
         'scipy',
         'pandas',
         'jupyter',
