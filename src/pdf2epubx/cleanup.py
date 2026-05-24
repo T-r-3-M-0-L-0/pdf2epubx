@@ -37,11 +37,12 @@ def repair_broken_paragraphs(text: str, level: str = "Medium") -> str:
             result.append(stripped)
             continue
 
-        prev = result[-1].rstrip()
+        prev = result[-1]
+        prev_stripped = prev.rstrip()
 
         # Low: только дефисные переносы (слово-\n продолжение)
-        if prev.endswith("-") and stripped and stripped[0].islower():
-            result[-1] = prev[:-1] + stripped
+        if prev_stripped.endswith("-") and stripped and stripped[0].islower():
+            result[-1] = prev_stripped[:-1] + stripped
             continue
 
         # Medium: склеиваем если предыдущая строка НЕ заканчивается
@@ -76,6 +77,10 @@ def clean_garbage_symbols(text: str) -> str:
     # Это важно, потому что между символами могут быть специальные пробелы
     text = re.sub(r'[\u00A0\u2000-\u200B\u202F\u3000]', ' ', text)
 
+    # 0a. Удаляем невидимые символы ДО обработки маркеров
+    # Примечание: soft hyphen (\u00AD) уже удаляется в text_repair.repair_encoding()
+    text = re.sub(r'[\u200C\u200D\uFEFF]', '', text)  # zero-width chars
+
     # 1. z z и zz (включая варианты с разными пробелами после нормализации)
     text = re.sub(r'z\s+z', '•', text, flags=re.IGNORECASE)
     text = re.sub(r'zz+', '•', text, flags=re.IGNORECASE)
@@ -95,6 +100,15 @@ def clean_garbage_symbols(text: str) -> str:
     # Затем обрабатываем квадраты в середине текста (комбинации)
     # Паттерн: квадрат(пробелы+квадрат)* - последовательность квадратов через пробелы
     text = re.sub(rf'[{square_chars}](?:[ \t]*[{square_chars}])*', '•', text)
+
+    # 2a. Критически важно: одиночные квадраты КАК ОТДЕЛЬНЫЕ "слова"
+    # Паттерн: символ не является буквой/цифрой до и после
+    # Но также обрабатываем случаи, когда квадрат между буквами (это скорее всего артефакт)
+    text = re.sub(rf'(?<![А-ЯA-Zа-яa-z0-ёЁ])[{square_chars}](?![А-ЯA-Zа-яa-z0-ёЁ])', '•', text)
+
+    # 2b. Если квадрат всё же оказался между буквами/цифрами - тоже заменяем
+    # Это артефакты OCR, которые нужно убрать
+    text = re.sub(rf'[{square_chars}]', '•', text)
 
     # 3. Дополнительные маркеры списков (bullet-like symbols)
     bullet_replacements = {
@@ -132,11 +146,19 @@ def clean_garbage_symbols(text: str) -> str:
     pua_markers = '\uF06C\uF0B7\uF0A1\uF06E\uF070\uF0A7\uF0AD'
     text = re.sub(f'[{pua_markers}]+', '•', text)
 
+    # 4a. Все PUA символы в диапазоне → • (если они окружены пробелами или в начале/конце строки)
+    # Это ловит кастомные шрифтовые символы, которые не попали в явный список
+    text = re.sub(r'(?<![А-ЯA-Zа-яa-z0-9ёЁ])[\uE000-\uF8FF](?![А-ЯA-Zа-яa-z0-9ёЁ])', '•', text)
+
     # 5. Удаляем одиночные символы в начале строки (альтернативные маркеры)
     # Но только если это НЕ буквы алфавита и НЕ цифры
     # Заменяем только специальные символы, которые могут быть артефактами OCR
     # Паттерн: начало строки + отступ + одиночный символ (не буква/цифра) + пробел + текст
     text = re.sub(r'^\s*[^\w\sа-яА-Яa-zA-Z][ \t]+([А-ЯA-Zа-яa-z])', r'• \1', text, flags=re.MULTILINE)
+
+    # 5a. Дополнительный паттерн: одиночный непечатный/спецсимвол между пробелами
+    # Ловим символы, которые выглядят как "мусор" (не буквы, не цифры, не базовая пунктуация)
+    text = re.sub(r'(?<!\S)[^\w\s.,;:!?()\[\]{}«»\u201c\u201d\u2018\u2019\u2014\u2013-](?!\S)', '\u2022', text)
 
     # Исключение: если это всё-таки буква, но она повторяется в нескольких строках подряд
     # (это может быть артефактом нумерации списка типа "a. b. c." или "z z z")
@@ -151,6 +173,11 @@ def clean_garbage_symbols(text: str) -> str:
 
 
 def clean_chart_artifacts(text: str, preserve_figure_references: bool = False) -> str:
+    """
+    Удаляет артефакты графиков и диаграмм (метки осей, легенды и т.п.).
+
+    Использует общие эвристики вместо привязки к конкретной предметной области.
+    """
     lines = text.split('\n')
     clean_lines = []
     for line in lines:
@@ -161,20 +188,22 @@ def clean_chart_artifacts(text: str, preserve_figure_references: bool = False) -
         lower = stripped.lower()
         length = len(stripped)
 
+        # Всегда сохраняем ссылки на рисунки
         if preserve_figure_references and re.search(r'(рис\.?|рисунок|figure|fig\.?)\s*\d', lower):
             clean_lines.append(line)
             continue
 
+        # Длинные строки и строки с тире — оставляем (это текст, а не метка)
         if length > 70 or "—" in stripped:
             clean_lines.append(line)
             continue
 
+        # Общие эвристики для артефактов графиков:
         if (
+            # Одиночная буква (метка оси): "a." или "б"
             re.fullmatch(r'[а-яa-z]\.?', lower) or
-            re.search(r'\b(19|20)\d{2}\b', stripped) or
-            re.search(r'\b(млрд|млн|тыс|ев|eb|pb|г\.|р\.|эксабайты)\b', lower) or
-            (len(re.findall(r'\d', stripped)) > length * 0.45 and length < 50) or
-            (length < 60 and any(kw in lower for kw in ["mainframe", "мейнфрейм", "оператор", "пакет заданий", "ввода", "польз.", "терминал", "устройство", "график", "трафика"]))
+            # Строка с > 45% цифр и < 50 символов (числовые метки)
+            (len(re.findall(r'\d', stripped)) > length * 0.45 and length < 50)
         ):
             continue
 

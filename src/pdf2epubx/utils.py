@@ -33,8 +33,93 @@ def normalize_line(value: str) -> str:
     return value.strip()
 
 
+def _is_likely_hyphenation(word_before_hyphen: str, word_after: str) -> bool:
+    """
+    Определяет, является ли дефис переносом строки (а не частью составного слова).
+
+    Составные слова типа "интернет-магазин", "кто-то" не должны склеиваться.
+    Переносы типа "компью-тер" — должны.
+
+    Эвристика:
+    - Если часть перед дефисом слишком короткая (< 2 символов) — не перенос
+    - Если часть после дефиса начинается с заглавной — не перенос
+    - Если обе части достаточно длинные (>= 4 буквы) — скорее составное слово
+    - Если часть после дефиса короткая (1-3 буквы) — скорее перенос
+    """
+    if len(word_before_hyphen) < 2 or not word_after:
+        return False
+
+    # Если слово после дефиса начинается с заглавной — это не перенос
+    if word_after[0].isupper():
+        return False
+
+    # Извлекаем первое слово из word_after (может быть "тер продолжение")
+    first_word_after = word_after.split()[0] if word_after.split() else word_after
+
+    # Если обе части — полноценные слова (>= 4 буквы каждая),
+    # скорее всего это составное слово ("интернет-магазин"), а не перенос
+    if len(word_before_hyphen) >= 4 and len(first_word_after) >= 4:
+        return False
+
+    # Если часть после дефиса короткая (1-3 буквы) — скорее перенос
+    if len(first_word_after) <= 3:
+        return True
+
+    # Русские и латинские гласные
+    vowels = set("аеёиоуыэюяaeiouyАЕЁИОУЫЭЮЯAEIOUY")
+
+    # Если часть перед дефисом заканчивается слогом (гласная + согласная),
+    # это выглядит как слог, разорванный переносом
+    last_chars = word_before_hyphen[-3:]
+    has_vowel = any(c in vowels for c in last_chars)
+    has_consonant = any(c.isalpha() and c not in vowels for c in last_chars)
+
+    if has_vowel and has_consonant:
+        return True
+
+    return False
+
+
 def repair_hyphenation(value: str) -> str:
-    value = re.sub(r"([A-Za-zА-Яа-яЁё])-[\n ]+([A-Za-zА-Яа-яЁё])", r"\1\2", value)
+    """
+    Склеивает слова, разорванные переносом строк.
+
+    Обрабатывает случаи:
+    1. Слово с дефисом + newline + продолжение (компью-\\nтер → компьютер)
+    2. Слово с дефисом + пробел + продолжение (компью- тер → компьютер)
+    3. Двойной дефис на стыке строк
+
+    Args:
+        value: Текст с возможными переносами.
+
+    Returns:
+        Текст со склеенными словами.
+    """
+    # 1. Классический случай: слово + дефис + newline(s) + пробелы + строчная буква
+    # Захватываем всё слово перед дефисом для контекстного анализа
+    def _repair_newline_hyphen(match: re.Match) -> str:
+        word_before = match.group(1)
+        after = match.group(2)
+        if _is_likely_hyphenation(word_before, after):
+            return word_before + after
+        return match.group(0)
+
+    value = re.sub(r'([A-Za-zА-Яа-яЁё]+)-\s*\n\s*([a-zа-яё])', _repair_newline_hyphen, value)
+
+    # 2. Двойной дефис на стыке строк: -\n- → "" (полное удаление)
+    value = re.sub(r'-\s*\n\s*-', '', value)
+
+    # 3. Дефис + пробел(ы) + строчная буква (после join строк в одну)
+    # "компью- тер" → "компьютер"
+    def _repair_space_hyphen(match: re.Match) -> str:
+        word_before = match.group(1)
+        after = match.group(2)
+        if _is_likely_hyphenation(word_before, after):
+            return word_before + after
+        return match.group(0)
+
+    value = re.sub(r'([A-Za-zА-Яа-яЁё]+)-\s+([a-zа-яё])', _repair_space_hyphen, value)
+
     return value
 
 

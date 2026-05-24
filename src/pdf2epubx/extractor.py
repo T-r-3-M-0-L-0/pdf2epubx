@@ -88,21 +88,20 @@ class PdfExtractor:
 
                     if isinstance(image_bytes, bytes) and image_bytes:
                         # Предобработка изображения (если включено)
+                        final_ext = image_ext
                         if self.image_preprocessor is not None:
                             try:
                                 image_bytes = self.image_preprocessor.preprocess(image_bytes)
-                                normalized_ext = "png"  # после предобработки всегда PNG
+                                final_ext = "png"  # после предобработки всегда PNG
                             except Exception:
                                 pass  # при ошибке используем оригинал
-                        else:
-                            normalized_ext = image_ext
 
                         blocks.append(
                             RawBlock(
                                 kind="image",
                                 bbox=bbox,
                                 image_bytes=image_bytes,
-                                image_ext=normalized_ext if self.image_preprocessor else image_ext,
+                                image_ext=final_ext,
                             )
                         )
 
