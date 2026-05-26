@@ -50,7 +50,6 @@ class HtmlRenderer:
         src = "../" + file_name
         return "\n".join([
             f'<section class="pdf-page facsimile-page" id="page-{page_number}">',
-            f'<div class="page-marker">Page {page_number}</div>',
             "<figure>",
             f'<img src="{html_escape(src)}" alt="Rendered page {page_number}"/>',
             "</figure>",

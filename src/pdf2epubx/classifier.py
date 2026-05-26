@@ -176,10 +176,16 @@ class BlockClassifier:
     def is_page_number(self, page: PageContent, block: RawBlock, text: str) -> bool:
         stripped = text.strip()
 
-        if not stripped.isdigit():
+        # Проверяем не только чистые цифры, но и номера с маркерами
+        # Удаляем распространенные маркеры: тире, точки, буллеты, "стр.", "page" и т.п.
+        cleaned = re.sub(r'^[\s\-\u2013\u2014\.\u2022\u25e6]*|[\s\-\u2013\u2014\.\u2022\u25e6]*$', '', stripped)
+        cleaned = re.sub(r'^(стр\.?|page|p\.?|с\.?)\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip()
+
+        if not cleaned.isdigit():
             return False
 
-        if len(stripped) > 4:
+        if len(cleaned) > 4:
             return False
 
         y0 = block.bbox[1]

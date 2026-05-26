@@ -249,13 +249,6 @@ img {
     margin-bottom: 1.2em;
 }
 
-.page-marker {
-    font-size: 0.75em;
-    opacity: 0.55;
-    text-align: right;
-    margin-bottom: 0.4em;
-}
-
 .page-fallback img,
 .facsimile-page img {
     width: 100%;
